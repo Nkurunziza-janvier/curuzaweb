@@ -1,0 +1,10 @@
+{
+  "description": "A customer-action platform that enables businesses to create a dynamic digital presence, allowing customers to discover, engage, and take action seamlessly.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

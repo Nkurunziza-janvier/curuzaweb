@@ -1,0 +1,10 @@
+import { ArrowLeft, Check, MessageCircle, Phone, ShoppingBag } from "lucide-react";
+import { useState } from "react";
+import { useParams } from "react-router";
+import { business } from "../data/mockData";
+import { Brand, Button, ButtonLink, Card, Heading } from "../components/ui";
+
+export default function ActionPage(){
+  const {action}=useParams(); const [done,setDone]=useState(false); const contact=action==="contact"; const title=contact?"Contact Afrinaija Pots":action==="book"?"Book a table":"Build your order";
+  return <div className="min-h-screen bg-cream"><header className="border-b border-line bg-white"><div className="shell flex h-16 items-center justify-between"><Brand/><ButtonLink to="/b/afrinai-ja" variant="ghost"><ArrowLeft size={16}/>Back</ButtonLink></div></header><main className="shell max-w-4xl py-12"><Heading as="h1">{title}</Heading><p className="mt-3 text-muted">{contact?"Choose the fastest way to reach the team.":"Select what you need and we’ll take care of the rest."}</p>{contact?<div className="mt-8 grid gap-4 sm:grid-cols-2">{[[MessageCircle,"WhatsApp","Usually replies in 20 minutes"],[Phone,"Call","Open today until 22:00"]].map(([Icon,label,desc])=><Button key={label as string} variant="secondary" className="h-32 flex-col items-start p-6"><Icon size={23} className="text-coral"/><span className="mt-3 font-display text-lg">{label as string}</span><span className="font-normal text-muted">{desc as string}</span></Button>)}</div>:<div className="mt-8 grid gap-5 md:grid-cols-3">{business.products.map(p=><Card key={p.id} className="overflow-hidden"><img src={p.image} alt={p.name} className="h-40 w-full object-cover"/><div className="p-4"><p className="font-bold">{p.name}</p><p className="mt-1 text-sm text-muted">RWF {p.price.toLocaleString()}</p><Button className="mt-4 w-full" variant={done?"secondary":"primary"} onClick={()=>setDone(true)} icon={done?<Check size={16}/>:<ShoppingBag size={16}/>}>{done?"Added":"Add to order"}</Button></div></Card>)}</div>}</main></div>
+}

@@ -1,0 +1,2 @@
+import { ButtonLink, Heading } from "../components/ui";
+export default function NotFoundPage(){return <main className="grid min-h-screen place-items-center bg-cream p-6 text-center"><div><p className="eyebrow">404 · Page not found</p><Heading as="h1">This link took a wrong turn.</Heading><p className="mt-5 text-muted">The page may have moved, but your next action is clear.</p><ButtonLink to="/" className="mt-7">Back to UbucuruziHub</ButtonLink></div></main>}
