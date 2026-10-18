@@ -3,10 +3,12 @@ import { createBrowserRouter, Navigate } from "react-router";
 import MarketingLayout from "../layouts/MarketingLayout";
 import DashboardLayout from "../layouts/DashboardLayout";
 import ProtectedRoute from "../components/auth/ProtectedRoute";
+import BrandLoader from "../components/BrandLoader";
+import PublicBusinessPage from "../pages/PublicBusinessPage";
+import { LanguageSwitcher, useLanguage } from "../i18n";
 
 const LandingPage = lazy(() => import("../pages/LandingPage"));
 const PricingPage = lazy(() => import("../pages/PricingPage"));
-const PublicBusinessPage = lazy(() => import("../pages/PublicBusinessPage"));
 const RequestPage = lazy(() => import("../pages/RequestPage"));
 const QuotePage = lazy(() => import("../pages/QuotePage"));
 const ActionPage = lazy(() => import("../pages/ActionPage"));
@@ -15,13 +17,26 @@ const NotFoundPage = lazy(() => import("../pages/NotFoundPage"));
 const AuthPage = lazy(() => import("../pages/AuthPages").then((module) => ({ default: module.AuthPage })));
 const DashboardHome = lazy(() => import("../pages/DashboardPages").then((module) => ({ default: module.DashboardHome })));
 const RequestsPage = lazy(() => import("../pages/DashboardPages").then((module) => ({ default: module.RequestsPage })));
+const RequestDetailPage = lazy(() => import("../pages/DashboardPages").then((module) => ({ default: module.RequestDetailPage })));
 const CreateQuotePage = lazy(() => import("../pages/DashboardPages").then((module) => ({ default: module.CreateQuotePage })));
+const QuoteDetailPage = lazy(() => import("../pages/DashboardPages").then((module) => ({ default: module.QuoteDetailPage })));
 const ResourcePage = lazy(() => import("../pages/DashboardPages").then((module) => ({ default: module.ResourcePage })));
 const AnalyticsPage = lazy(() => import("../pages/DashboardPages").then((module) => ({ default: module.AnalyticsPage })));
+const AdminLayout = lazy(() => import("../layouts/AdminLayout"));
+const AdminOverviewPage = lazy(() => import("../pages/AdminPages").then((module) => ({ default: module.AdminOverviewPage })));
+const AdminBusinessesPage = lazy(() => import("../pages/AdminPages").then((module) => ({ default: module.AdminBusinessesPage })));
+const AdminActivityPage = lazy(() => import("../pages/AdminPages").then((module) => ({ default: module.AdminActivityPage })));
+const AdminPaymentsPage = lazy(() => import("../pages/SubscriptionPages").then((module) => ({ default: module.AdminPaymentsPage })));
+const BillingPage = lazy(() => import("../pages/SubscriptionPages").then((module) => ({ default: module.BillingPage })));
+
+function LoadingFallback() {
+  const { t } = useLanguage();
+  return <><div className="fixed right-5 top-5 z-[100]"><LanguageSwitcher compact /></div><BrandLoader title={t("Opening e-businessRw")} detail={t("Getting the experience ready for you.")} /></>;
+}
 
 function Page({ children }: { children: ReactNode }) {
   return (
-    <Suspense fallback={<div className="grid min-h-[60vh] place-items-center"><div className="skeleton h-12 w-48 rounded-2xl" aria-label="Loading page" /></div>}>
+    <Suspense fallback={<LoadingFallback />}>
       {children}
     </Suspense>
   );
@@ -37,20 +52,33 @@ export const router = createBrowserRouter([
   },
   { path: "login", element: <Page><AuthPage /></Page> },
   { path: "register", element: <Page><AuthPage register /></Page> },
-  { path: "onboarding", element: <Page><OnboardingPage /></Page> },
+  {
+    path: "admin",
+    element: <ProtectedRoute requireAdmin><AdminLayout /></ProtectedRoute>,
+    children: [
+      { index: true, element: <Page><AdminOverviewPage /></Page> },
+      { path: "businesses", element: <Page><AdminBusinessesPage /></Page> },
+      { path: "activity", element: <Page><AdminActivityPage /></Page> },
+      { path: "payments", element: <Page><AdminPaymentsPage /></Page> },
+    ],
+  },
+  { path: "onboarding", element: <ProtectedRoute><Page><OnboardingPage /></Page></ProtectedRoute> },
   { path: "b/:businessSlug", element: <Page><PublicBusinessPage /></Page> },
   { path: "b/:businessSlug/request", element: <Page><RequestPage /></Page> },
   { path: "b/:businessSlug/:action", element: <Page><ActionPage /></Page> },
-  { path: "q/:quoteId", element: <Page><QuotePage /></Page> },
+  { path: "q/:publicToken", element: <Page><QuotePage /></Page> },
   {
     path: "dashboard",
     element: <ProtectedRoute><DashboardLayout /></ProtectedRoute>,
     children: [
       { index: true, element: <Page><DashboardHome /></Page> },
       { path: "requests", element: <Page><RequestsPage /></Page> },
+      { path: "requests/:requestId", element: <Page><RequestDetailPage /></Page> },
       { path: "quotes", element: <Page><ResourcePage type="quotes" /></Page> },
       { path: "quotes/new", element: <Page><CreateQuotePage /></Page> },
+      { path: "quotes/:quoteId", element: <Page><QuoteDetailPage /></Page> },
       { path: "products", element: <Page><ResourcePage type="products" /></Page> },
+      { path: "billing", element: <Page><BillingPage /></Page> },
       { path: "services", element: <Page><ResourcePage type="services" /></Page> },
       { path: "offers", element: <Page><ResourcePage type="offers" /></Page> },
       { path: "business-page", element: <Page><ResourcePage type="business-page" /></Page> },

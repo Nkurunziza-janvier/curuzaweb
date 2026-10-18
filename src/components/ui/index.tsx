@@ -1,12 +1,12 @@
-import { LoaderCircle } from "lucide-react";
+import { LoaderCircle, Store } from "lucide-react";
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
 import { Link, type LinkProps } from "react-router";
 
-export function Brand({ light = false }: { light?: boolean }) {
+export function Brand({ light = false, onClick }: { light?: boolean; onClick?: LinkProps["onClick"] }) {
   return (
-    <Link to="/" className={`inline-flex items-center gap-2.5 font-display text-lg font-bold tracking-tight ${light ? "text-white" : "text-ink"}`}>
-      <span className="grid size-8 place-items-center rounded-xl bg-coral text-sm text-white shadow-sm">U</span>
-      Ubucuruzi<span className="text-coral">Hub</span>
+    <Link to="/" onClick={onClick} aria-label="e-businessRw home" className={`inline-flex items-center gap-2.5 font-display text-lg font-bold tracking-tight ${light ? "text-white" : "text-ink"}`}>
+      <span className="relative grid size-9 place-items-center rounded-xl bg-[#075b43] text-sm text-white shadow-sm"><span className="absolute -right-1 -top-1 grid size-4 place-items-center rounded-md bg-[#f18838] text-[9px] font-extrabold">e</span><Store size={18} strokeWidth={2.2} /></span>
+      <span>e-business<span className={light ? "text-emerald-300" : "text-[#087553]"}>Rw</span></span>
     </Link>
   );
 }

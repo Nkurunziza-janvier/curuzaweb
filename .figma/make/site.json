@@ -1,7 +1,8 @@
 {
-  "description": "A customer-action platform that enables businesses to create a dynamic digital presence, allowing customers to discover, engage, and take action seamlessly.",
+  "title": "e-businessRw — Your Business Online",
+  "description": "Create a business page where customers can explore your products and services, contact your business, send an enquiry, and review a clear quote.",
   "robots": {
-    "index": false
+    "index": true
   },
   "accessibility": {
     "addBypassLinks": false,

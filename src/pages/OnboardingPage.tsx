@@ -1,25 +1,300 @@
-import { ArrowLeft, ArrowRight, Check, Image, MapPin, Store } from "lucide-react";
-import { useState } from "react";
+import { ArrowLeft, ArrowRight, Check, Image, ImagePlus, MapPin, Store } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { Badge, Brand, Button, Card, Input, Label, Select } from "../components/ui";
+import { LocationPicker, type Coordinates } from "../components/onboarding/LocationPicker";
+import { ImageUploadField } from "../components/ImageUploadField";
+import { LanguageSwitcher, useLanguage } from "../i18n";
+import { useCurrentUser } from "../hooks/apiHooks";
+import { businessService, productService, requestService, resolveAssetUrl, serviceService } from "../services/api";
 
-const steps = ["Business", "Category", "Location", "Contact", "Brand", "Services", "Actions", "Questions", "Preview", "Publish"];
+const steps = ["Business", "Category", "Location", "Contact", "Brand", "Your story", "Hours", "Products", "Services", "Actions", "Questions", "Preview", "Publish"];
+const requestTypes = ["TEXT", "TEXTAREA", "NUMBER", "SELECT", "MULTI_SELECT", "DATE", "TIME", "FILE", "LOCATION", "PHONE", "EMAIL"] as const;
+const weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] as const;
+type OpeningDay = { closed: boolean; opens: string; closes: string };
+type OpeningSchedule = Record<typeof weekdays[number], OpeningDay>;
+
+function emptyOpeningSchedule(): OpeningSchedule {
+  return Object.fromEntries(weekdays.map((day) => [day, { closed: true, opens: "09:00", closes: "17:00" }])) as OpeningSchedule;
+}
+
+function timeToInput(value: string) {
+  const match = value.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+  if (!match) return "";
+  let hour = Number(match[1]);
+  const meridiem = match[3]?.toUpperCase();
+  if (meridiem === "PM" && hour < 12) hour += 12;
+  if (meridiem === "AM" && hour === 12) hour = 0;
+  return `${String(hour).padStart(2, "0")}:${match[2]}`;
+}
+
+function formatTime(value: string) {
+  const [hourText, minute] = value.split(":");
+  const hour = Number(hourText);
+  return `${hour % 12 || 12}:${minute} ${hour >= 12 ? "PM" : "AM"}`;
+}
+
+function parseOpeningSchedule(display: string): OpeningSchedule {
+  const schedule = emptyOpeningSchedule();
+  for (const line of display.split("\n")) {
+    const match = line.match(/^(.+?):\s*(.+)$/);
+    if (!match) continue;
+    const [, dayText, hoursText] = match;
+    const abbreviations = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    const matchedDays = weekdays.filter((day, index) => new RegExp(`\\b(?:${day}|${abbreviations[index]})\\b`, "i").test(dayText));
+    if (/closed/i.test(hoursText)) {
+      matchedDays.forEach((day) => { schedule[day].closed = true; });
+      continue;
+    }
+    const times = hoursText.match(/(\d{1,2}:\d{2}\s*(?:AM|PM)?)/gi);
+    if (times?.length !== 2) continue;
+    const opens = timeToInput(times[0]);
+    const closes = timeToInput(times[1]);
+    if (!opens || !closes) continue;
+    matchedDays.forEach((day) => { schedule[day] = { closed: false, opens, closes }; });
+    if (/mon\w*\s*[-–]\s*fri\w*/i.test(dayText)) {
+      ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].forEach((day) => { schedule[day as keyof OpeningSchedule] = { closed: false, opens, closes }; });
+    }
+    if (/mon\w*\s*[-–]\s*sun\w*/i.test(dayText)) weekdays.forEach((day) => { schedule[day] = { closed: false, opens, closes }; });
+  }
+  return schedule;
+}
+
+function formatOpeningSchedule(schedule: OpeningSchedule) {
+  return weekdays.map((day) => {
+    const hours = schedule[day];
+    return `${day}: ${hours.closed ? "Closed" : `${formatTime(hours.opens)} – ${formatTime(hours.closes)}`}`;
+  }).join("\n");
+}
+
+function defaultQuestions(category: string) {
+  const lowered = category.toLowerCase();
+  if (lowered.includes("restaurant") || lowered.includes("food")) return [
+    { label: "What would you like?", type: "TEXT", required: true },
+    { label: "Quantity", type: "NUMBER", required: true },
+    { label: "Pickup or delivery", type: "SELECT", required: true, options: ["Pickup", "Delivery"] },
+    { label: "Location", type: "LOCATION", required: false },
+    { label: "Special instructions", type: "TEXTAREA", required: false },
+  ];
+  if (lowered.includes("photo")) return [
+    { label: "Event type", type: "TEXT", required: true },
+    { label: "Event date", type: "DATE", required: true },
+    { label: "Event location", type: "LOCATION", required: true },
+    { label: "Number of people", type: "NUMBER", required: false },
+    { label: "Package", type: "TEXT", required: false },
+    { label: "Budget", type: "NUMBER", required: false },
+  ];
+  if (lowered.includes("construction")) return [
+    { label: "Project type", type: "TEXT", required: true },
+    { label: "Location", type: "LOCATION", required: true },
+    { label: "Property size", type: "TEXT", required: false },
+    { label: "Service required", type: "TEXTAREA", required: true },
+    { label: "Budget", type: "NUMBER", required: false },
+    { label: "Photos", type: "FILE", required: false },
+  ];
+  if (lowered.includes("furniture")) return [
+    { label: "Product", type: "TEXT", required: true },
+    { label: "Quantity", type: "NUMBER", required: true },
+    { label: "Size", type: "TEXT", required: false },
+    { label: "Material", type: "TEXT", required: false },
+    { label: "Customization", type: "TEXTAREA", required: false },
+    { label: "Delivery location", type: "LOCATION", required: false },
+  ];
+  if (lowered.includes("auto") || lowered.includes("mechanic")) return [
+    { label: "What do you need?", type: "SELECT", required: true, options: ["Repair", "Maintenance", "Inspection", "Other"] },
+    { label: "Vehicle type", type: "TEXT", required: true },
+    { label: "Vehicle model", type: "TEXT", required: true },
+    { label: "Describe the problem", type: "TEXTAREA", required: true },
+    { label: "Upload photo", type: "FILE", required: false },
+    { label: "Location", type: "LOCATION", required: true },
+    { label: "Preferred date", type: "DATE", required: false },
+  ];
+  return [
+    { label: "What service do you need?", type: "TEXT", required: true },
+    { label: "Tell us more", type: "TEXTAREA", required: true },
+    { label: "Preferred date", type: "DATE", required: false },
+    { label: "Location", type: "LOCATION", required: false },
+  ];
+}
+
+interface BusinessSetup {
+  id: string;
+  name: string;
+  tagline: string;
+  description: string;
+  highlights: string[];
+  openingHours: { display?: string } | null;
+  category: string;
+  city: string | null;
+  address: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  phone: string | null;
+  whatsapp: string | null;
+  email: string | null;
+  logoUrl: string | null;
+  coverImageUrl: string | null;
+  onboardingStep: number;
+}
 
 export default function OnboardingPage() {
-  const [step, setStep] = useState(0); const [name, setName] = useState("Afrinaija Pots"); const navigate = useNavigate();
-  return <div className="min-h-screen bg-cream"><header className="border-b border-line bg-white"><div className="shell-wide flex h-17 items-center justify-between"><Brand /><p className="text-xs font-semibold text-muted">Setup {Math.round(((step + 1) / steps.length) * 100)}% complete</p></div></header>
-    <div className="h-1 bg-line"><div className="h-full bg-coral transition-all" style={{width:`${((step+1)/steps.length)*100}%`}} /></div>
+  const { t } = useLanguage();
+  const navigate = useNavigate();
+  const { data: user } = useCurrentUser();
+  const businessId = user?.business?.id;
+  const [step, setStep] = useState(0);
+  const [name, setName] = useState("");
+  const [tagline, setTagline] = useState("");
+  const [description, setDescription] = useState("");
+  const [highlights, setHighlights] = useState("");
+  const [openingSchedule, setOpeningSchedule] = useState<OpeningSchedule>(() => emptyOpeningSchedule());
+  const [appointmentOnly, setAppointmentOnly] = useState(true);
+  const [productName, setProductName] = useState("");
+  const [productDescription, setProductDescription] = useState("");
+  const [productPrice, setProductPrice] = useState("");
+  const [productCategory, setProductCategory] = useState("");
+  const [productImageUrl, setProductImageUrl] = useState("");
+  const [category, setCategory] = useState("Other");
+  const [city, setCity] = useState("");
+  const [address, setAddress] = useState("");
+  const [coordinates, setCoordinates] = useState<Coordinates | null>(null);
+  const [locationError, setLocationError] = useState("");
+  const [phone, setPhone] = useState("");
+  const [whatsapp, setWhatsapp] = useState("");
+  const [email, setEmail] = useState("");
+  const [logoUrl, setLogoUrl] = useState("");
+  const [coverImageUrl, setCoverImageUrl] = useState("");
+  const [serviceName, setServiceName] = useState("");
+  const [serviceDescription, setServiceDescription] = useState("");
+  const [servicePrice, setServicePrice] = useState("");
+  const [serviceImageUrl, setServiceImageUrl] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [businessLoaded, setBusinessLoaded] = useState(false);
+  const progress = Math.round(((step + 1) / steps.length) * 100);
+
+  useEffect(() => {
+    if (!businessId) return;
+    void businessService.get<BusinessSetup>(businessId).then((business) => {
+      setName(business.name);
+      setTagline(business.tagline ?? "");
+      setDescription(business.description ?? "");
+      setHighlights((business.highlights ?? []).join("\n"));
+      const hoursDisplay = business.openingHours?.display ?? "";
+      setOpeningSchedule(parseOpeningSchedule(hoursDisplay));
+      setAppointmentOnly(!hoursDisplay.trim());
+      setCategory(business.category);
+      setCity(business.city ?? "");
+      setAddress(business.address ?? "");
+      setCoordinates(business.latitude !== null && business.longitude !== null ? { latitude: business.latitude, longitude: business.longitude } : null);
+      setPhone(business.phone ?? "");
+      setWhatsapp(business.whatsapp ?? "");
+      setEmail(business.email ?? "");
+      setLogoUrl(business.logoUrl ?? "");
+      setCoverImageUrl(business.coverImageUrl ?? "");
+      setStep(Math.min(business.onboardingStep, steps.length - 1));
+      setBusinessLoaded(true);
+    }).catch((reason: unknown) => {
+      setError(reason instanceof Error ? reason.message : "Could not load onboarding details");
+      setBusinessLoaded(true);
+    });
+  }, [businessId]);
+
+  const saveAndContinue = async () => {
+    if (!businessId) {
+      setError("Your account does not have a business yet.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      if (step === 0) await businessService.update(businessId, { name });
+      if (step === 1) {
+        await businessService.update(businessId, { category });
+        const questions = defaultQuestions(category).map((question, sortOrder) => ({
+          ...question,
+          type: question.type as typeof requestTypes[number],
+          sortOrder,
+        }));
+        await requestService.saveTemplate(businessId, { name: `${category} request`, businessType: category, questions });
+      }
+      if (step === 2) await businessService.update(businessId, { city, address, latitude: coordinates?.latitude ?? null, longitude: coordinates?.longitude ?? null });
+      if (step === 3) await businessService.update(businessId, { phone, whatsapp, email: email || null });
+      if (step === 4) await businessService.update(businessId, { logoUrl: logoUrl || null, coverImageUrl: coverImageUrl || null });
+      if (step === 5) await businessService.update(businessId, { tagline: tagline.trim(), description: description.trim(), highlights: highlights.split("\n").map((item) => item.trim()).filter(Boolean) });
+      if (step === 6) {
+        const display = appointmentOnly ? "" : formatOpeningSchedule(openingSchedule);
+        await businessService.update(businessId, { openingHours: display ? { display } : null });
+      }
+      if (step === 7 && productName.trim()) {
+        await productService.create(businessId, { name: productName.trim(), description: productDescription.trim(), price: Number(productPrice || 0), currency: "RWF", category: productCategory.trim(), imageUrl: productImageUrl || null });
+      }
+      if (step === 8 && serviceName.trim()) {
+        await serviceService.create(businessId, { name: serviceName.trim(), description: serviceDescription.trim(), startingPrice: Number(servicePrice || 0), currency: "RWF", imageUrl: serviceImageUrl || null, isPublished: true });
+      }
+      if (step === 12) {
+        await businessService.publish(businessId, true);
+        await businessService.update(businessId, { onboardingStep: steps.length });
+        navigate("/dashboard", { replace: true });
+        return;
+      }
+      const nextStep = Math.min(step + 1, steps.length - 1);
+      await businessService.update(businessId, { onboardingStep: nextStep });
+      setStep(nextStep);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Your progress could not be saved");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!businessLoaded) return <div className="grid min-h-screen place-items-center bg-cream"><div className="skeleton h-12 w-48 rounded-2xl" aria-label="Loading onboarding" /></div>;
+
+  return <div className="min-h-screen bg-cream"><header className="border-b border-line bg-white"><div className="shell-wide flex h-17 items-center justify-between"><Brand /><LanguageSwitcher compact /><p className="text-xs font-semibold text-muted">{t("Setup")} {progress}% {t("complete")}</p></div></header>
+    <div className="h-1 bg-line"><div className="h-full bg-coral transition-all" style={{ width: `${progress}%` }} /></div>
     <main className="shell-wide grid gap-10 py-8 lg:grid-cols-[1fr_.8fr] lg:py-14">
-      <section className="mx-auto w-full max-w-xl"><Badge tone="violet">Step {step + 1} · {steps[step]}</Badge><h1 className="mt-5 font-display text-3xl font-bold tracking-tight">{step === 0 ? "Let’s get your business online." : step === 1 ? "What kind of business is it?" : step === 2 ? "Where can customers find you?" : step === 8 ? "This is looking good." : step === 9 ? "Ready to welcome customers?" : `Set up your ${steps[step].toLowerCase()}.`}</h1><p className="mt-3 text-muted">You can update this anytime from your workspace.</p>
+      <section className="mx-auto w-full max-w-xl"><Badge tone="violet">{t("Step")} {step + 1} · {t(steps[step])}</Badge><h1 className="mt-5 font-display text-3xl font-bold tracking-tight">{step === 0 ? t("Let’s get your business online.") : step === 1 ? t("What kind of business is it?") : step === 2 ? t("Where can customers find you?") : step === 11 ? t("This is looking good.") : step === 12 ? t("Ready to welcome customers?") : `${t("Set up your")} ${t(steps[step]).toLowerCase()}.`}</h1><p className="mt-3 text-muted">{t("Every step is saved to your business profile so you can return later.")}</p>
         <Card className="mt-8 p-6">
-          {step === 0 && <div><Label htmlFor="business-name">Business name</Label><Input id="business-name" value={name} onChange={e=>setName(e.target.value)} /></div>}
-          {step === 1 && <div><Label htmlFor="category">Business category</Label><Select id="category" defaultValue="restaurant"><option value="restaurant">Restaurant & catering</option><option>Beauty & wellness</option><option>Automotive services</option><option>Construction</option><option>Professional services</option></Select></div>}
-          {step === 2 && <div><Label htmlFor="location">Primary location</Label><div className="relative"><MapPin className="absolute left-4 top-3.5 text-muted" size={18}/><Input className="pl-11" id="location" defaultValue="Kimihurura, Kigali" /></div></div>}
-          {step > 2 && step < 8 && <div className="space-y-4">{[1,2,3].map(i=><button key={i} className="flex w-full items-center gap-4 rounded-xl border border-line p-4 text-left transition hover:border-violet"><span className="icon-tile"><Check size={16}/></span><span><strong className="block text-sm">{steps[step]} option {i}</strong><span className="text-xs text-muted">Recommended setup for your business type</span></span></button>)}</div>}
-          {step >= 8 && <div className="text-center"><span className="mx-auto grid size-16 place-items-center rounded-full bg-success-soft text-success"><Check size={28}/></span><p className="mt-5 font-display text-xl font-bold">{step === 9 ? "Everything is ready to publish" : "Your customer page is ready for review"}</p><p className="mt-2 text-sm text-muted">Customers will be able to discover, order, request catering, and contact you.</p></div>}
+          {step === 0 && <div><Label htmlFor="business-name">{t("Business name")}</Label><Input id="business-name" required value={name} onChange={(event) => setName(event.target.value)} /></div>}
+          {step === 1 && <div><Label htmlFor="category">{t("Business category")}</Label><Select id="category" value={category} onChange={(event) => setCategory(event.target.value)}><option>Restaurant</option><option>Mechanic</option><option>Beauty</option><option>Construction</option><option>Furniture</option><option>Photographer</option><option>Professional services</option><option>Other</option></Select></div>}
+          {step === 2 && <div className="space-y-5"><div className="grid gap-4 sm:grid-cols-2"><div><Label htmlFor="city">{t("City")}</Label><Input id="city" autoComplete="address-level2" value={city} onChange={(event) => setCity(event.target.value)} placeholder="e.g. Kigali" /></div><div><Label htmlFor="location">Street or neighbourhood</Label><div className="relative"><MapPin className="absolute left-4 top-3.5 text-muted" size={18} /><Input className="pl-11" id="location" autoComplete="street-address" value={address} onChange={(event) => setAddress(event.target.value)} placeholder="e.g. KG 7 Ave, Kimihurura" /></div></div></div><LocationPicker coordinates={coordinates} onSelect={(next) => { setCoordinates(next); setLocationError(""); }} onGeolocationError={setLocationError} />{locationError && <p role="alert" className="text-sm text-coral-dark">{locationError}</p>}<p className="text-xs leading-relaxed text-muted">Your pin helps customers find the right place. The interactive picker uses OpenStreetMap; you can open your selected pin in Google Maps.</p></div>}
+          {step === 3 && <div className="space-y-4"><div><Label htmlFor="contact-phone">{t("Business phone")}</Label><Input id="contact-phone" type="tel" value={phone} onChange={(event) => setPhone(event.target.value)} /></div><div><Label htmlFor="contact-whatsapp">WhatsApp</Label><Input id="contact-whatsapp" type="tel" value={whatsapp} onChange={(event) => setWhatsapp(event.target.value)} /></div><div><Label htmlFor="contact-email">{t("Business email")}</Label><Input id="contact-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} /></div></div>}
+          {step === 4 && <div className="space-y-5"><ImageUploadField title="Business logo" description="A square image works best. JPG, PNG, WebP or GIF · up to 8 MB." value={logoUrl} onChange={setLogoUrl} shape="square" /><ImageUploadField title="Cover photo" description="A wide photo makes a strong first impression. JPG, PNG, WebP or GIF · up to 8 MB." value={coverImageUrl} onChange={setCoverImageUrl} shape="wide" /><div className="flex gap-3 rounded-xl bg-violet-soft/60 p-4 text-sm leading-relaxed text-ink"><ImagePlus className="mt-0.5 shrink-0 text-violet" size={18} /><p>Your images appear on your public business page. You can change them at any time.</p></div></div>}
+          {step === 5 && <div className="space-y-4"><div><Label htmlFor="business-tagline">Short headline</Label><Input id="business-tagline" maxLength={180} value={tagline} onChange={(event) => setTagline(event.target.value)} placeholder="e.g. Fresh food, made with care" /><p className="mt-1 text-xs text-muted">A short line shown beside your business name.</p></div><div><Label htmlFor="business-description">About your business</Label><textarea id="business-description" maxLength={5000} rows={4} className="field min-h-28 resize-y" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What do you offer, who do you serve, and what makes your business special?" /></div><div><Label htmlFor="business-highlights">Why customers choose you</Label><textarea id="business-highlights" rows={4} className="field min-h-24 resize-y" value={highlights} onChange={(event) => setHighlights(event.target.value)} placeholder={"One highlight per line\nFresh ingredients\nFast and reliable service\nLocally owned"} /><p className="mt-1 text-xs text-muted">Add up to 8 genuine highlights. Each line becomes a point on your business page.</p></div></div>}
+          {step === 6 && <div className="space-y-5">
+            <div>
+              <p className="text-sm font-semibold text-ink">{t("Opening hours")}</p>
+              <p className="mt-1 text-sm text-muted">Choose the days you are open, then set your opening and closing times.</p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" className="min-h-11 rounded-xl border border-line px-2 py-2 text-xs font-semibold leading-tight text-ink transition hover:border-success hover:bg-success-soft/40 hover:text-success sm:px-3 sm:text-sm" onClick={() => { setAppointmentOnly(false); setOpeningSchedule(Object.fromEntries(weekdays.map((day) => [day, { closed: !["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"].includes(day), opens: "09:00", closes: "17:00" }])) as OpeningSchedule); }}><span className="block">{t("Weekdays")}</span><span className="mt-0.5 block text-[11px] font-normal text-muted">9:00 AM – 5:00 PM</span></button>
+              <button type="button" className="min-h-11 rounded-xl border border-line px-2 py-2 text-xs font-semibold leading-tight text-ink transition hover:border-success hover:bg-success-soft/40 hover:text-success sm:px-3 sm:text-sm" onClick={() => { setAppointmentOnly(false); setOpeningSchedule(Object.fromEntries(weekdays.map((day) => [day, { closed: false, opens: "09:00", closes: "17:00" }])) as OpeningSchedule); }}><span className="block">{t("Every day")}</span><span className="mt-0.5 block text-[11px] font-normal text-muted">9:00 AM – 5:00 PM</span></button>
+            </div>
+            <div className="divide-y divide-line overflow-hidden rounded-2xl border border-line">
+              {weekdays.map((day) => {
+                const hours = openingSchedule[day];
+                return <div key={day} className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-2 p-3 sm:grid-cols-[minmax(105px,.8fr)_auto_1fr_1fr] sm:items-center sm:gap-4 sm:px-4">
+                  <span className="min-w-0 self-center text-sm font-semibold text-ink">{day}</span>
+                  <label className="flex min-h-9 cursor-pointer items-center justify-end gap-2 whitespace-nowrap text-sm text-muted sm:justify-start"><input type="checkbox" checked={!hours.closed} onChange={(event) => { setAppointmentOnly(false); setOpeningSchedule((current) => ({ ...current, [day]: { ...current[day], closed: !event.target.checked } })); }} />Open</label>
+                  <div className="col-span-2 grid min-w-0 grid-cols-2 gap-2 sm:contents">
+                    <label className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-1.5 text-xs text-muted sm:gap-2">From<input aria-label={`${day} opening time`} className="field h-10 min-w-0 px-2 text-sm" type="time" value={hours.opens} disabled={hours.closed || appointmentOnly} onChange={(event) => setOpeningSchedule((current) => ({ ...current, [day]: { ...current[day], opens: event.target.value } }))} /></label>
+                    <label className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-1.5 text-xs text-muted sm:gap-2">Until<input aria-label={`${day} closing time`} className="field h-10 min-w-0 px-2 text-sm" type="time" value={hours.closes} disabled={hours.closed || appointmentOnly} onChange={(event) => setOpeningSchedule((current) => ({ ...current, [day]: { ...current[day], closes: event.target.value } }))} /></label>
+                  </div>
+                </div>;
+              })}
+            </div>
+            <label className="flex min-h-14 cursor-pointer items-center gap-3 rounded-xl bg-cream p-3 text-sm sm:p-4"><input className="size-4 shrink-0" type="checkbox" checked={appointmentOnly} onChange={(event) => setAppointmentOnly(event.target.checked)} /><span className="min-w-0"><strong className="block text-ink">By appointment only</strong><span className="mt-0.5 block text-xs leading-relaxed text-muted sm:text-sm">Don’t show set hours on your business page.</span></span></label>
+            <p className="text-xs text-muted">You can change these hours any time from your dashboard.</p>
+          </div>}
+          {step === 7 && <div className="space-y-4"><ImageUploadField title="Product photo" description="A clear photo helps customers choose. You can add products later from your dashboard." value={productImageUrl} onChange={setProductImageUrl} shape="wide" /><div><Label htmlFor="product-name">First product (optional)</Label><Input id="product-name" value={productName} onChange={(event) => setProductName(event.target.value)} placeholder="e.g. Fresh juice" /></div>{productName && <><div><Label htmlFor="product-description">Product description</Label><textarea id="product-description" rows={3} className="field min-h-20 resize-y" value={productDescription} onChange={(event) => setProductDescription(event.target.value)} placeholder="Describe what customers are buying" /></div><div className="grid gap-3 sm:grid-cols-2"><div><Label htmlFor="product-price">Price (RWF)</Label><Input id="product-price" type="number" min="0" value={productPrice} onChange={(event) => setProductPrice(event.target.value)} /></div><div><Label htmlFor="product-category">Category</Label><Input id="product-category" value={productCategory} onChange={(event) => setProductCategory(event.target.value)} placeholder="e.g. Drinks" /></div></div></>}<p className="text-sm text-muted">Product details are saved now. They become visible to customers after publishing is approved by an administrator.</p></div>}
+          {step === 8 && <div className="space-y-4"><ImageUploadField title="Service photo (optional)" description="Show customers what the service looks like." value={serviceImageUrl} onChange={setServiceImageUrl} shape="wide" /><div><Label htmlFor="service-name">First service (optional)</Label><Input id="service-name" value={serviceName} onChange={(event) => setServiceName(event.target.value)} placeholder="e.g. Custom catering" /></div>{serviceName && <><div><Label htmlFor="service-description">Service description</Label><textarea id="service-description" rows={3} className="field min-h-20 resize-y" value={serviceDescription} onChange={(event) => setServiceDescription(event.target.value)} placeholder="What does this service include?" /></div><div><Label htmlFor="service-price">Starting price (RWF)</Label><Input id="service-price" type="number" min="0" value={servicePrice} onChange={(event) => setServicePrice(event.target.value)} /></div></>}<p className="text-sm text-muted">You can add more services from your dashboard.</p></div>}
+          {step === 9 && <div className="space-y-4">{[["Request a quote", "Collect a tailored customer request"], ["WhatsApp", "Let customers message your team"], ["Phone", "Let customers call your business"]].map(([title, desc]) => <div key={title} className="flex items-center gap-4 rounded-xl border border-line p-4"><span className="icon-tile"><Check size={16} /></span><span><strong className="block text-sm">{title}</strong><span className="text-xs text-muted">{desc}</span></span></div>)}<p className="text-xs text-muted">Request and contact actions are enabled on your public page when contact details are available.</p></div>}
+          {step === 10 && <div className="space-y-3"><p className="text-sm text-muted">A {category.toLowerCase()} request form is ready. Its questions are saved to the server and can be changed later.</p>{defaultQuestions(category).map((question, index) => <div key={question.label} className="flex items-center justify-between rounded-lg border border-line px-3 py-2 text-sm"><span>{index + 1}. {question.label}</span><span className="text-xs text-muted">{question.required ? "Required" : "Optional"}</span></div>)}</div>}
+          {step >= 11 && <div className="text-center"><span className="mx-auto grid size-16 place-items-center rounded-full bg-success-soft text-success"><Check size={28} /></span><p className="mt-5 font-display text-xl font-bold">{step === 12 ? "Everything is ready to publish" : "Your customer page is ready for review"}</p><p className="mt-2 text-sm text-muted">{name} · {category} · {city || "Location not set"}.</p><p className="mt-2 text-sm text-muted">Customers will see your story, opening hours, contact details, services, and approved products.</p></div>}
         </Card>
-        <div className="mt-8 flex justify-between"><Button variant="ghost" disabled={step === 0} onClick={()=>setStep(step-1)} icon={<ArrowLeft size={17}/>}>Back</Button><Button onClick={()=> step === 9 ? navigate("/dashboard") : setStep(step+1)}>{step === 9 ? "Publish page" : "Continue"} <ArrowRight size={17}/></Button></div>
+        {error && <p role="alert" className="mt-4 rounded-xl bg-coral-soft p-3 text-sm text-coral-dark">{error}</p>}
+        <div className="mt-8 flex justify-between"><Button variant="ghost" disabled={step === 0 || saving} onClick={() => setStep(step - 1)} icon={<ArrowLeft size={17} />}>{t("Back")}</Button><Button disabled={!name.trim() || saving} loading={saving} onClick={() => void saveAndContinue()}>{step === 12 ? t("Publish page") : t("Save & continue")} <ArrowRight size={17} /></Button></div>
       </section>
-      <aside className="hidden lg:block"><p className="mb-3 text-center text-xs font-bold uppercase tracking-widest text-muted">Live mobile preview</p><div className="mx-auto w-72 rounded-[2rem] border-8 border-ink bg-white p-2 shadow-float"><div className="overflow-hidden rounded-[1.4rem]"><div className="h-40 bg-[url('https://images.unsplash.com/photo-1665333048952-a3ee97714c6b?auto=format&fit=crop&w=700&q=80')] bg-cover bg-center" /><div className="p-4"><div className="-mt-9 grid size-14 place-items-center rounded-xl border-4 border-white bg-coral font-bold text-white">AP</div><p className="mt-2 font-display text-lg font-bold">{name || "Your business"}</p><p className="text-xs text-muted">Restaurant · Kigali</p><div className="mt-4 grid grid-cols-2 gap-2"><span className="rounded-lg bg-coral p-2 text-center text-[.65rem] font-bold text-white">Order now</span><span className="rounded-lg bg-ink p-2 text-center text-[.65rem] font-bold text-white">WhatsApp</span></div><div className="mt-4 space-y-2">{[Store,Image,MapPin].map((Icon,i)=><div key={i} className="flex items-center gap-2 rounded-lg border border-line p-2"><Icon size={13} className="text-coral"/><i className="h-2 w-28 rounded bg-line"/></div>)}</div></div></div></div></aside>
+      <aside className="hidden lg:block"><p className="mb-3 text-center text-xs font-bold uppercase tracking-widest text-muted">Live mobile preview</p><div className="mx-auto w-72 rounded-[2rem] border-8 border-ink bg-white p-2 shadow-float"><div className="overflow-hidden rounded-[1.4rem]"><div className="relative h-40 bg-[#f0eee9]">{coverImageUrl ? <img src={resolveAssetUrl(coverImageUrl)} alt="" className="size-full object-cover" /> : <div className="grid size-full place-items-center bg-gradient-to-br from-violet-soft to-coral-soft text-violet"><Image size={30} /></div>}<div className="absolute inset-0 bg-gradient-to-t from-ink/40 to-transparent" /></div><div className="p-4"><div className="-mt-9 grid size-14 place-items-center overflow-hidden rounded-xl border-4 border-white bg-coral font-bold text-white shadow-card">{logoUrl ? <img src={resolveAssetUrl(logoUrl)} alt="" className="size-full object-cover" /> : <Store size={20} />}</div><p className="mt-2 font-display text-lg font-bold">{name || "Your business"}</p><p className="text-xs text-muted">{category} · {city || "Your city"}</p><div className="mt-4 grid grid-cols-2 gap-2"><span className="rounded-lg bg-coral p-2 text-center text-[.65rem] font-bold text-white">Request quote</span><span className="rounded-lg bg-ink p-2 text-center text-[.65rem] font-bold text-white">WhatsApp</span></div><div className="mt-4 space-y-2">{[Store, Image, MapPin].map((Icon, index) => <div key={index} className="flex items-center gap-2 rounded-lg border border-line p-2"><Icon size={13} className="text-coral" /><i className="h-2 w-28 rounded bg-line" /></div>)}</div></div></div></div></aside>
     </main></div>;
 }

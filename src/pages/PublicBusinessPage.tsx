@@ -1,44 +1,112 @@
-import { ArrowRight, BadgeCheck, CalendarDays, Clock3, Compass, CreditCard, FileQuestion, FileText, MapPin, MessageCircle, Phone, ShoppingBag, Star, UtensilsCrossed } from "lucide-react";
-import { business } from "../data/mockData";
-import { Badge, Brand, ButtonLink, Card, Heading } from "../components/ui";
+import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { useNavigate, useParams } from "react-router";
+import { analyticsService, businessService } from "../services/api";
+import { usePublicBusiness } from "../hooks/apiHooks";
+import { ButtonLink, Card, Heading } from "../components/ui";
+import BrandLoader from "../components/BrandLoader";
+import BusinessStorefront from "./BusinessStorefront";
+import { LanguageSwitcher, useLanguage } from "../i18n";
 
-const icons = { order: ShoppingBag, quote: FileText, book: CalendarDays, question: FileQuestion, contact: Phone, directions: Compass, pay: CreditCard };
+export interface PublicProduct { id: string; name: string; description: string; price: number | string; currency: string; imageUrl: string | null; category: string; }
+export interface PublicService { id: string; name: string; description: string; startingPrice: number | string; currency: string; duration: string | null; imageUrl: string | null; }
+export interface PublicOffer { id: string; title: string; description: string; discountType: "PERCENTAGE" | "FIXED"; discountValue: number | string; startsAt: string; endsAt: string; }
+export interface PublicReview { id: string; customerName: string; rating: number; comment: string; createdAt: string; }
+export interface PublicBusiness {
+  id: string; slug: string; name: string; tagline: string; description: string; category: string; highlights: string[];
+  logoUrl: string | null; coverImageUrl: string | null; phone: string | null; whatsapp: string | null; email: string | null;
+  address: string | null; city: string | null; country: string; latitude: number | null; longitude: number | null;
+  openingHours: { display?: string } | null; rating: number; reviewCount: number; stats: { pageViews: number; customerRequests: number };
+  products: PublicProduct[]; services: PublicService[]; offers: PublicOffer[]; reviews: PublicReview[];
+}
 
 export default function PublicBusinessPage() {
-  return (
-    <div className="min-h-screen bg-white pb-22 md:pb-0">
-      <header className="border-b border-line bg-white"><div className="shell-wide flex h-16 items-center justify-between"><Brand /><span className="text-xs text-muted">Powered business page</span></div></header>
-      <section className="relative">
-        <div className="h-72 sm:h-96 lg:h-[27rem]"><img src={business.profile.coverImage} alt="Afrinaija Pots signature dining spread" className="h-full w-full object-cover" /><div className="absolute inset-0 bg-gradient-to-t from-ink/70 via-transparent to-transparent" /></div>
-        <div className="shell relative -mt-16">
-          <Card className="relative p-5 shadow-float sm:p-7">
-            <div className="flex flex-col gap-5 sm:flex-row sm:items-end">
-              <div className="grid size-20 shrink-0 place-items-center rounded-2xl border-4 border-white bg-coral font-display text-2xl font-bold text-white shadow-card">{business.profile.logo}</div>
-              <div className="flex-1">
-                <div className="flex flex-wrap items-center gap-2"><h1 className="font-display text-2xl font-bold tracking-tight sm:text-3xl">{business.name}</h1><BadgeCheck size={21} className="fill-violet text-white" aria-label="Verified business" /></div>
-                <p className="mt-1 text-sm text-muted">{business.category.name} · {business.profile.tagline}</p>
-                <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs font-semibold text-muted"><span className="flex items-center gap-1 text-ink"><Star size={14} className="fill-[#f6b83f] text-[#f6b83f]" /> {business.profile.rating} ({business.profile.reviewCount})</span><span className="flex items-center gap-1"><MapPin size={14} /> Kimihurura, Kigali</span><span className="flex items-center gap-1 text-success"><Clock3 size={14} /> Open · until 22:00</span></div>
-              </div>
-              <div className="hidden gap-2 sm:flex"><ButtonLink to="/b/afrinai-ja/order" icon={<UtensilsCrossed size={17} />}>Order now</ButtonLink><ButtonLink to="/b/afrinai-ja/contact" variant="secondary" icon={<MessageCircle size={17} />}>WhatsApp</ButtonLink></div>
-            </div>
-          </Card>
-        </div>
-      </section>
+  const { t } = useLanguage();
+  const navigate = useNavigate();
+  const { businessSlug } = useParams();
+  const { data: business, isLoading, isError, error } = usePublicBusiness<PublicBusiness>(businessSlug);
+  const [minimumLoadingSlug, setMinimumLoadingSlug] = useState<string>();
+  useEffect(() => {
+    const timer = window.setTimeout(() => setMinimumLoadingSlug(businessSlug), 1800);
+    return () => window.clearTimeout(timer);
+  }, [businessSlug]);
+  const { data: brand } = useQuery<{ name: string }>({
+    queryKey: ["public-business-brand", businessSlug],
+    queryFn: () => businessService.getPublicBusinessBrand<{ name: string }>(businessSlug!),
+    enabled: Boolean(businessSlug),
+    staleTime: 5 * 60_000,
+  });
+  const [search, setSearch] = useState("");
+  const [category, setCategory] = useState("All");
+  const [copied, setCopied] = useState(false);
+  const [cartOpen, setCartOpen] = useState(false);
+  const [cart, setCart] = useState<Record<string, number>>({});
 
-      <main className="shell py-16">
-        <section>
-          <Heading eyebrow="Your next step">What would you like to do?</Heading>
-          <p className="mt-4 max-w-2xl text-muted">Choose an action and we’ll guide you through it. No long forms, no guessing.</p>
-          <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{business.actions.map((action) => { const Icon = icons[action.type]; return <ButtonLink key={action.type} to={action.type === "quote" ? "/b/afrinai-ja/request" : `/b/afrinai-ja/${action.type}`} variant="secondary" className="group h-auto min-h-40 flex-col items-start rounded-2xl p-6 text-left"><span className="icon-tile bg-coral-soft text-coral"><Icon size={20} /></span><span className="mt-4 font-display text-lg">{action.title}</span><span className="font-normal leading-relaxed text-muted">{action.description}</span><ArrowRight size={16} className="mt-auto text-coral transition group-hover:translate-x-1" /></ButtonLink>})}</div>
-        </section>
+  const products = business?.products ?? [];
+  const categories = useMemo(() => ["All", ...new Set(products.map((product) => product.category).filter(Boolean))], [products]);
+  const visibleProducts = useMemo(() => products.filter((product) => (category === "All" || product.category === category) && (!search || `${product.name} ${product.description} ${product.category}`.toLowerCase().includes(search.toLowerCase()))), [products, category, search]);
+  const visibleServices = useMemo(() => (business?.services ?? []).filter((service) => !search || `${service.name} ${service.description}`.toLowerCase().includes(search.toLowerCase())), [business?.services, search]);
+  const cartItems = products.filter((product) => cart[product.id]).map((product) => ({ ...product, quantity: cart[product.id] }));
+  const cartCount = cartItems.reduce((total, item) => total + item.quantity, 0);
+  const cartTotal = cartItems.reduce((total, item) => total + Number(item.price) * item.quantity, 0);
+  const changeCartQuantity = (id: string, amount: number) => setCart((current) => ({ ...current, [id]: Math.max(0, (current[id] ?? 0) + amount) }));
 
-        <section className="mt-24"><div className="flex items-end justify-between gap-4"><Heading eyebrow="Popular today">Food worth coming back for</Heading><ButtonLink to="/b/afrinai-ja/order" variant="ghost">View full menu <ArrowRight size={16} /></ButtonLink></div><div className="mt-8 grid gap-5 md:grid-cols-3">{business.products.map(product => <Card key={product.id} className="group overflow-hidden"><div className="h-48 overflow-hidden"><img src={product.image} alt={product.name} loading="lazy" className="h-full w-full object-cover transition duration-500 group-hover:scale-105" /></div><div className="p-5"><p className="font-display text-lg font-bold">{product.name}</p><p className="mt-2 min-h-10 text-sm leading-relaxed text-muted">{product.description}</p><div className="mt-4 flex items-center justify-between"><p className="font-bold">RWF {product.price.toLocaleString()}</p><ButtonLink to="/b/afrinai-ja/order" variant="secondary">Add</ButtonLink></div></div></Card>)}</div></section>
+  if (isLoading || minimumLoadingSlug !== businessSlug) {
+    const businessName = business?.name ?? brand?.name;
+    const readableSlug = businessSlug?.split("-").filter(Boolean).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
+    return <BrandLoader brandName={businessName ?? readableSlug ?? "Business"} />;
+  }
+  if (isError || !business) return <main className="relative grid min-h-screen place-items-center bg-[#fafaf6] p-5"><div className="absolute right-5 top-5"><LanguageSwitcher compact/></div><Card className="max-w-lg p-8 text-center"><Heading as="h1">{t("Business page unavailable")}</Heading><p className="mt-3 text-muted">{t("This business page is not available.")}</p><ButtonLink to="/" className="mt-6">{t("Back to e-businessRw")}</ButtonLink></Card></main>;
 
-        <section className="mt-24 grid gap-8 lg:grid-cols-[1.2fr_.8fr]"><div><Heading eyebrow="About">Food made for sharing.</Heading><p className="mt-5 max-w-2xl text-lg leading-relaxed text-muted">{business.profile.description}</p><div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3">{business.profile.gallery.map((image, i) => <img key={image} src={image} alt={`Afrinaija Pots gallery ${i + 1}`} loading="lazy" className={`h-44 w-full rounded-2xl object-cover ${i === 0 ? "col-span-2 sm:col-span-1" : ""}`} />)}</div></div><Card className="h-fit p-6"><Badge tone="accent">{business.offers[0].value}</Badge><h3 className="mt-4 font-display text-xl font-bold">{business.offers[0].title}</h3><p className="mt-2 text-sm text-muted">Gather the family this Sunday and enjoy more around the table.</p><ButtonLink to="/b/afrinai-ja/order" className="mt-5 w-full">Claim offer</ButtonLink><div className="mt-6 border-t border-line pt-5"><p className="text-sm font-bold">Visit us</p><p className="mt-2 text-sm text-muted">{business.profile.location}</p><p className="mt-1 text-sm text-muted">{business.profile.hours}</p></div></Card></section>
+  const track = (eventType: string, metadata?: Record<string, unknown>) => { if (businessSlug) void analyticsService.track(businessSlug, eventType, metadata).catch((reason: unknown) => console.error("Could not record customer action", reason)); };
+  const addToCart = (product: PublicProduct) => {
+    setCart((current) => ({ ...current, [product.id]: (current[product.id] ?? 0) + 1 }));
+    track("ORDER_CLICK", { action: "cart_add", productId: product.id, productName: product.name });
+  };
+  const sendOrderRequest = () => {
+    if (!cartItems.length) return;
+    navigate(`/b/${business.slug}/request`, { state: { orderItems: cartItems.map(({ id, name, quantity, price, currency }) => ({ id, name, quantity, unitPrice: Number(price), currency })) } });
+    setCartOpen(false);
+  };
+  const phoneLink = business.phone ? `tel:${business.phone}` : undefined;
+  const whatsappDigits = business.whatsapp?.replace(/\D/g, "");
+  const whatsappLink = whatsappDigits ? `https://wa.me/${whatsappDigits}` : undefined;
+  const hasCoordinates = business.latitude !== null && business.longitude !== null;
+  const locationText = [business.address, business.city, business.country].filter(Boolean).join(", ");
+  const mapQuery = hasCoordinates ? `${business.latitude},${business.longitude}` : encodeURIComponent(locationText);
+  const directionsLink = hasCoordinates || locationText ? `https://www.google.com/maps/search/?api=1&query=${mapQuery}` : undefined;
+  const openingHours = business.openingHours?.display?.trim();
+  const shareUrl = window.location.href;
+  const sharePage = async () => {
+    if (navigator.share) { try { await navigator.share({ title: business.name, text: business.tagline || business.description, url: shareUrl }); } catch { /* User dismissed the share sheet. */ } return; }
+    try { await navigator.clipboard.writeText(shareUrl); setCopied(true); window.setTimeout(() => setCopied(false), 1800); } catch { setCopied(false); }
+  };
 
-        <section className="mt-24"><Heading eyebrow="Customer stories">Trusted for the moments that matter</Heading><div className="mt-8 grid gap-4 md:grid-cols-2">{business.reviews.map(review => <Card key={review.id} className="p-6"><div className="flex gap-1 text-[#f6b83f]">{Array.from({length: review.rating}).map((_,i)=><Star key={i} size={15} className="fill-current" />)}</div><p className="mt-4 font-display text-lg font-semibold leading-relaxed">“{review.comment}”</p><p className="mt-5 text-sm font-bold">{review.customer} <span className="font-normal text-muted">· {review.date}</span></p></Card>)}</div></section>
-      </main>
-      <div className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-2 gap-2 border-t border-line bg-white/95 p-3 backdrop-blur-xl sm:hidden"><ButtonLink to="/b/afrinai-ja/order" icon={<ShoppingBag size={18} />}>Order now</ButtonLink><ButtonLink to="/b/afrinai-ja/contact" variant="dark" icon={<MessageCircle size={18} />}>WhatsApp</ButtonLink></div>
-    </div>
-  );
+  return <BusinessStorefront
+    business={business}
+    products={products}
+    visibleProducts={visibleProducts}
+    visibleServices={visibleServices}
+    categories={categories}
+    search={search}
+    setSearch={setSearch}
+    category={category}
+    setCategory={setCategory}
+    cartItems={cartItems}
+    cartCount={cartCount}
+    cartTotal={cartTotal}
+    cartOpen={cartOpen}
+    setCartOpen={setCartOpen}
+    copied={copied}
+    shareUrl={shareUrl}
+    sharePage={sharePage}
+    addToCart={addToCart}
+    changeCartQuantity={changeCartQuantity}
+    sendOrderRequest={sendOrderRequest}
+    track={track}
+    phoneLink={phoneLink}
+    whatsappLink={whatsappLink}
+    directionsLink={directionsLink}
+    openingHours={openingHours}
+  />;
 }
