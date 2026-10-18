@@ -1,0 +1,3 @@
+ALTER TABLE "Business"
+  ADD COLUMN "tagline" TEXT NOT NULL DEFAULT '',
+  ADD COLUMN "highlights" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];

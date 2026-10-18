@@ -1,0 +1,392 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  BUSINESS_OWNER
+  ADMIN
+}
+
+enum RequestStatus {
+  NEW
+  REVIEWING
+  QUOTE_SENT
+  CUSTOMER_RESPONDED
+  ACCEPTED
+  REJECTED
+  COMPLETED
+}
+
+enum QuestionType {
+  TEXT
+  TEXTAREA
+  NUMBER
+  SELECT
+  MULTI_SELECT
+  DATE
+  TIME
+  FILE
+  LOCATION
+  PHONE
+  EMAIL
+}
+
+enum QuoteStatus {
+  DRAFT
+  SENT
+  VIEWED
+  ACCEPTED
+  REJECTED
+  CHANGE_REQUESTED
+  EXPIRED
+  CANCELLED
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED
+}
+
+enum EventType {
+  PAGE_VIEW
+  WHATSAPP_CLICK
+  PHONE_CLICK
+  DIRECTIONS_CLICK
+  ORDER_CLICK
+  QUOTE_REQUEST
+  BOOKING_CLICK
+  PAYMENT_CLICK
+  QUOTE_ACCEPTED
+  QUOTE_REJECTED
+  QUOTE_CREATED
+  QUOTE_SENT
+  QUOTE_VIEWED
+  QUOTE_CHANGE_REQUESTED
+  QUOTE_EXPIRED
+}
+
+enum MessageSender {
+  CUSTOMER
+  BUSINESS
+}
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(BUSINESS_OWNER)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  business     Business?
+  adminActions AdminAuditLog[] @relation("AdminActor")
+}
+
+model Business {
+  id             String             @id @default(uuid())
+  ownerId        String             @unique
+  name           String
+  slug           String             @unique
+  description    String             @default("")
+  tagline        String             @default("")
+  highlights     String[]           @default([])
+  category       String             @default("Other")
+  logoUrl        String?
+  coverImageUrl  String?
+  phone          String?
+  whatsapp       String?
+  email          String?
+  address        String?
+  city           String?
+  country        String             @default("Rwanda")
+  latitude       Float?
+  longitude      Float?
+  openingHours   Json?
+  isPublished    Boolean            @default(false)
+  canPublishProducts Boolean        @default(false)
+  productAccessExpiresAt DateTime?
+  isBlocked      Boolean            @default(false)
+  onboardingStep Int                @default(0)
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  owner          User               @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  products       Product[]
+  services       Service[]
+  offers         Offer[]
+  reviews        Review[]
+  requestTemplates RequestTemplate[]
+  requests       CustomerRequest[]
+  quotes         Quote[]
+  events         BusinessEvent[]
+  adminAuditLogs AdminAuditLog[]    @relation("BusinessAdminAudit")
+  subscriptionPayments SubscriptionPayment[]
+
+  @@index([ownerId])
+}
+
+enum SubscriptionPaymentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model SubscriptionPayment {
+  id                   String   @id @default(uuid())
+  businessId           String
+  planCode             String
+  amount               Decimal  @db.Decimal(12, 2)
+  currency             String   @default("RWF")
+  paymentMethod        String   @default("MOBILE_MONEY")
+  payerPhone           String
+  transactionReference String   @unique
+  status               SubscriptionPaymentStatus @default(PENDING)
+  submittedAt          DateTime @default(now())
+  reviewedAt           DateTime?
+  reviewNote           String?
+  validUntil           DateTime?
+  reviewedById         String?
+  business             Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([status, submittedAt])
+  @@index([businessId, submittedAt])
+}
+
+model Notification {
+  id          String   @id @default(uuid())
+  userId      String?
+  forAdmins   Boolean  @default(false)
+  title       String
+  message     String
+  type        String   @default("INFO")
+  link        String?
+  readAt      DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([userId, readAt, createdAt])
+  @@index([forAdmins, readAt, createdAt])
+}
+
+model AdminAuditLog {
+  id         String    @id @default(uuid())
+  actorId    String
+  businessId String?
+  action     String
+  details    Json?
+  createdAt  DateTime  @default(now())
+  actor      User      @relation("AdminActor", fields: [actorId], references: [id], onDelete: Cascade)
+  business   Business? @relation("BusinessAdminAudit", fields: [businessId], references: [id], onDelete: SetNull)
+
+  @@index([actorId, createdAt])
+  @@index([businessId, createdAt])
+}
+
+model Product {
+  id          String   @id @default(uuid())
+  businessId  String
+  name        String
+  description String   @default("")
+  price       Decimal  @db.Decimal(12, 2)
+  currency    String   @default("RWF")
+  imageUrl    String?
+  category    String   @default("")
+  isAvailable Boolean  @default(true)
+  isPublished Boolean  @default(false)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+}
+
+model Service {
+  id                  String   @id @default(uuid())
+  businessId          String
+  name                String
+  description         String   @default("")
+  startingPrice       Decimal  @default(0) @db.Decimal(12, 2)
+  currency            String   @default("RWF")
+  duration            String?
+  imageUrl            String?
+  category            String   @default("")
+  customRequestEnabled Boolean @default(true)
+  isPublished         Boolean  @default(true)
+  sortOrder           Int      @default(0)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  business            Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+}
+
+model Offer {
+  id            String       @id @default(uuid())
+  businessId    String
+  title         String
+  description   String       @default("")
+  discountType  DiscountType
+  discountValue Decimal      @db.Decimal(12, 2)
+  startsAt      DateTime
+  endsAt        DateTime
+  isActive      Boolean      @default(true)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  business      Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId])
+}
+
+model RequestTemplate {
+  id           String            @id @default(uuid())
+  businessId   String
+  name         String
+  businessType String
+  isActive     Boolean           @default(true)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  business     Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  questions    RequestQuestion[]
+
+  @@index([businessId, isActive])
+}
+
+model RequestQuestion {
+  id         String         @id @default(uuid())
+  templateId String
+  label      String
+  type       QuestionType
+  required   Boolean        @default(false)
+  options    Json?
+  sortOrder  Int            @default(0)
+  template   RequestTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  answers    RequestAnswer[]
+
+  @@index([templateId, sortOrder])
+}
+
+model CustomerRequest {
+  id              String          @id @default(uuid())
+  sequence        Int             @unique @default(autoincrement())
+  requestNumber   String          @unique
+  businessId      String
+  customerName    String
+  customerEmail   String?
+  customerPhone   String?
+  customerWhatsapp String?
+  requestType     String
+  description     String          @default("")
+  location        String?
+  preferredDate   DateTime?
+  budget          Decimal?        @db.Decimal(12, 2)
+  status          RequestStatus   @default(NEW)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  business        Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  answers         RequestAnswer[]
+  quote           Quote?
+
+  @@index([businessId, status])
+  @@index([businessId, createdAt])
+}
+
+model RequestAnswer {
+  id         String          @id @default(uuid())
+  requestId  String
+  questionId String?
+  label      String
+  value      Json
+  request    CustomerRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  question   RequestQuestion? @relation(fields: [questionId], references: [id], onDelete: SetNull)
+
+  @@index([requestId])
+}
+
+model Quote {
+  id           String         @id @default(uuid())
+  sequence     Int            @unique @default(autoincrement())
+  quoteNumber  String         @unique
+  publicToken  String         @unique @default(uuid())
+  requestId    String         @unique
+  businessId   String
+  subtotal     Decimal        @db.Decimal(12, 2)
+  discount     Decimal        @default(0) @db.Decimal(12, 2)
+  discountType DiscountType   @default(FIXED)
+  discountValue Decimal       @default(0) @db.Decimal(12, 2)
+  total        Decimal        @db.Decimal(12, 2)
+  currency     String         @default("RWF")
+  validityDays Int            @default(7)
+  validUntil   DateTime
+  estimatedCompletionDate DateTime?
+  paymentTerms String         @default("")
+  depositAmount Decimal       @default(0) @db.Decimal(12, 2)
+  notes        String         @default("")
+  status       QuoteStatus    @default(DRAFT)
+  sentAt       DateTime?
+  viewedAt     DateTime?
+  acceptedAt   DateTime?
+  rejectedAt   DateTime?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  request      CustomerRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  business     Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  items        QuoteItem[]
+  messages     QuoteMessage[]
+
+  @@index([businessId, status])
+  @@index([requestId])
+}
+
+model QuoteItem {
+  id          String   @id @default(uuid())
+  quoteId     String
+  name        String
+  description String   @default("")
+  quantity    Decimal  @db.Decimal(12, 3)
+  unitPrice   Decimal  @db.Decimal(12, 2)
+  total       Decimal  @db.Decimal(14, 2)
+  sortOrder   Int      @default(0)
+  quote       Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  @@index([quoteId, sortOrder])
+}
+
+model QuoteMessage {
+  id         String       @id @default(uuid())
+  quoteId    String
+  senderType MessageSender
+  message    String
+  createdAt  DateTime     @default(now())
+  quote      Quote        @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  @@index([quoteId, createdAt])
+}
+
+model Review {
+  id           String   @id @default(uuid())
+  businessId   String
+  customerName String
+  rating       Int
+  comment      String
+  isPublished  Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  business     Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, isPublished])
+}
+
+model BusinessEvent {
+  id         String    @id @default(uuid())
+  businessId String
+  eventType  EventType
+  metadata   Json?
+  createdAt  DateTime  @default(now())
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, eventType])
+  @@index([businessId, createdAt])
+}
