@@ -1,4 +1,4 @@
-import { BarChart3, ChevronDown, Eye, FileText, Gift, LayoutDashboard, Menu, Package, PanelTop, Settings, ShoppingBag, Sparkles, X, CreditCard } from "lucide-react";
+import { BarChart3, CalendarClock, CalendarDays, ChevronDown, Eye, FileText, Gift, LayoutDashboard, Menu, Package, PanelTop, Settings, ShoppingBag, Sparkles, X, CreditCard } from "lucide-react";
 import { useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
@@ -11,6 +11,8 @@ import { LanguageSwitcher, useLanguage } from "../i18n";
 const links = [
   ["/dashboard", "Overview", LayoutDashboard],
   ["/dashboard/requests", "Requests", FileText],
+  ["/dashboard/bookings", "Bookings", CalendarDays],
+  ["/dashboard/availability", "Availability", CalendarClock],
   ["/dashboard/quotes", "Quotes", Sparkles],
   ["/dashboard/products", "Products", Package],
   ["/dashboard/billing", "Plans & billing", CreditCard],

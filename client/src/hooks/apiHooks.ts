@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { analyticsService, businessService, quoteService, requestService } from "../services/api";
+import { analyticsService, bookingService, businessService, quoteService, requestService } from "../services/api";
 import { authService, type AuthUser } from "../services/authService";
 
 export const queryKeys = {
@@ -10,6 +10,11 @@ export const queryKeys = {
   requests: (id: string) => ["requests", id] as const,
   request: (id: string) => ["request", id] as const,
   quotes: (id: string) => ["quotes", id] as const,
+  bookings: (id: string) => ["bookings", id] as const,
+  bookingSummary: (id: string) => ["booking-summary", id] as const,
+  bookingSettings: (id: string) => ["booking-settings", id] as const,
+  availability: (slug: string, serviceId: string, from: string, to: string) => ["availability", slug, serviceId, from, to] as const,
+  publicBooking: (token: string) => ["public-booking", token] as const,
 };
 
 export function useCurrentUser() {
@@ -50,5 +55,23 @@ export function useBusinessQuotes<T>(businessId: string | undefined) {
     queryKey: queryKeys.quotes(businessId ?? ""),
     queryFn: () => quoteService.listByBusiness<T>(businessId!),
     enabled: Boolean(businessId),
+  });
+}
+
+export function useBookingAvailability<T>(slug: string | undefined, serviceId: string | undefined, from: string, to: string) {
+  return useQuery<T>({
+    queryKey: queryKeys.availability(slug ?? "", serviceId ?? "", from, to),
+    queryFn: () => bookingService.getAvailability<T>(slug!, serviceId!, from, to),
+    enabled: Boolean(slug && serviceId),
+    staleTime: 30_000,
+  });
+}
+
+export function usePublicBooking<T>(publicToken: string | undefined) {
+  return useQuery<T>({
+    queryKey: queryKeys.publicBooking(publicToken ?? ""),
+    queryFn: () => bookingService.getPublic<T>(publicToken!),
+    enabled: Boolean(publicToken),
+    retry: false,
   });
 }

@@ -1,4 +1,4 @@
-import { ArrowRight, BarChart3, Bell, Check, ChevronDown, ChevronRight, ChevronUp, Clipboard, Compass, Copy, Eye, FileText, Gift, Image, MessageCircle, MoreHorizontal, Package, Pencil, Phone, Plus, Search, Send, ShieldAlert, Sparkles, Trash2, TrendingUp, Users, type LucideIcon } from "lucide-react";
+import { ArrowRight, BarChart3, Bell, CalendarDays, Check, ChevronDown, ChevronRight, ChevronUp, Clipboard, Compass, Copy, Eye, FileText, Gift, Image, MessageCircle, MoreHorizontal, Package, Pencil, Phone, Plus, Search, Send, ShieldAlert, Sparkles, Trash2, TrendingUp, Users, type LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -63,7 +63,12 @@ interface AnalyticsRecord {
   phoneClicks: number;
   directionsClicks: number;
   quoteValue: number;
-  funnel: { visitors: number; actions: number; requests: number; quotes: number; acceptedQuotes: number };
+  bookingClicks: number;
+  bookings: number;
+  completedBookings: number;
+  upcomingBookings: number;
+  reviewsSubmitted: number;
+  funnel: { visitors: number; actions: number; requests: number; quotes: number; acceptedQuotes: number; bookings: number; completedBookings: number };
 }
 
 function requestStatusLabel(status: RequestStatus) {
@@ -549,6 +554,11 @@ interface ResourceRecord {
   endsAt?: string;
   isActive?: boolean;
   isPublished?: boolean;
+  duration?: string | null;
+  durationMinutes?: number | null;
+  bufferMinutes?: number;
+  capacity?: number;
+  isBookable?: boolean;
   request?: { customerName: string; requestType: string };
 }
 
@@ -562,7 +572,7 @@ export function ResourcePage({ type }: { type: ResourceType }) {
   const queryClient = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: "", description: "", price: "", imageUrl: "", title: "", discountValue: "10", discountType: "PERCENTAGE", startsAt: new Date().toISOString().slice(0, 10), endsAt: new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10) });
+  const [form, setForm] = useState({ name: "", description: "", price: "", imageUrl: "", title: "", discountValue: "10", discountType: "PERCENTAGE", startsAt: new Date().toISOString().slice(0, 10), endsAt: new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10), durationMinutes: "60", bufferMinutes: "15", capacity: "1", isBookable: false });
   const metadata: Record<ResourceType, [string, string, LucideIcon]> = {
     quotes: ["Quotes", "Create, send, and follow up on professional quotes.", FileText],
     products: ["Products", "Manage what customers can browse and order.", Package],
@@ -588,7 +598,7 @@ export function ResourcePage({ type }: { type: ResourceType }) {
       const payload = type === "products"
         ? { name: form.name, description: form.description, price: Number(form.price), currency: "RWF", imageUrl: form.imageUrl || null }
         : type === "services"
-          ? { name: form.name, description: form.description, startingPrice: Number(form.price), currency: "RWF", imageUrl: form.imageUrl || null }
+          ? { name: form.name, description: form.description, startingPrice: Number(form.price), currency: "RWF", imageUrl: form.imageUrl || null, durationMinutes: form.durationMinutes ? Number(form.durationMinutes) : null, duration: form.durationMinutes ? `${form.durationMinutes} minutes` : null, bufferMinutes: Number(form.bufferMinutes || 0), capacity: Number(form.capacity || 1), isBookable: form.isBookable }
           : { title: form.title, description: form.description, discountType: form.discountType, discountValue: Number(form.discountValue), startsAt: new Date(`${form.startsAt}T00:00:00.000Z`).toISOString(), endsAt: new Date(`${form.endsAt}T23:59:59.999Z`).toISOString() };
       if (editingId) return type === "products"
         ? productService.update(editingId, payload)
@@ -601,7 +611,7 @@ export function ResourcePage({ type }: { type: ResourceType }) {
           ? serviceService.create(businessId!, payload)
           : offerService.create(businessId!, payload);
     },
-    onSuccess: () => { setShowCreate(false); setEditingId(null); setForm({ ...form, name: "", title: "", description: "", price: "", imageUrl: "" }); void queryClient.invalidateQueries({ queryKey: key }); },
+    onSuccess: () => { setShowCreate(false); setEditingId(null); setForm({ ...form, name: "", title: "", description: "", price: "", imageUrl: "", durationMinutes: "60", bufferMinutes: "15", capacity: "1", isBookable: false }); void queryClient.invalidateQueries({ queryKey: key }); },
   });
   const deleteMutation = useMutation({
     mutationFn: (id: string) => type === "products" ? productService.delete(id) : type === "services" ? serviceService.delete(id) : offerService.delete(id),
@@ -627,6 +637,10 @@ export function ResourcePage({ type }: { type: ResourceType }) {
       discountType: item.discountType ?? "PERCENTAGE",
       startsAt: item.startsAt ? new Date(item.startsAt).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
       endsAt: item.endsAt ? new Date(item.endsAt).toISOString().slice(0, 10) : new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10),
+      durationMinutes: String(item.durationMinutes ?? 60),
+      bufferMinutes: String(item.bufferMinutes ?? 0),
+      capacity: String(item.capacity ?? 1),
+      isBookable: Boolean(item.isBookable),
     });
     setShowCreate(true);
   };
@@ -634,7 +648,7 @@ export function ResourcePage({ type }: { type: ResourceType }) {
   if (type === "quotes") return <QuotesManagement businessId={businessId ?? ""} quotes={quoteListQuery.data ?? []} isLoading={quoteListQuery.isLoading} error={quoteListQuery.error} />;
   if (type === "settings" || type === "business-page") return <SettingsLike title={title} description={description} custom={type === "business-page"} />;
   return <div className="mx-auto max-w-7xl">
-    <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><Heading as="h1">{t(title)}</Heading><p className="mt-2 text-muted">{t(description)}</p></div><Button icon={<Plus size={17} />} onClick={() => { setEditingId(null); setForm({ ...form, name: "", title: "", description: "", price: "", imageUrl: "" }); setShowCreate(!showCreate); }}>{t("New")} {t(type.slice(0, -1))}</Button></div>
+    <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><Heading as="h1">{t(title)}</Heading><p className="mt-2 text-muted">{t(description)}</p></div><Button icon={<Plus size={17} />} onClick={() => { setEditingId(null); setForm({ ...form, name: "", title: "", description: "", price: "", imageUrl: "", durationMinutes: "60", bufferMinutes: "15", capacity: "1", isBookable: false }); setShowCreate(!showCreate); }}>{t("New")} {t(type.slice(0, -1))}</Button></div>
     {(type === "products" || type === "services") && businessInfo && (!businessInfo.canPublishProducts || !businessInfo.productAccessExpiresAt || new Date(businessInfo.productAccessExpiresAt) <= new Date()) && <div className="mt-5 flex items-start gap-3 rounded-2xl border border-[#f0dfc8] bg-[#fff8ec] p-4 text-sm text-[#76522a]"><ShieldAlert size={18} className="mt-0.5 shrink-0 text-[#c27a26]" /><div><p><strong>{t("Publishing products and services needs an active plan.")}</strong> {t("You can prepare your catalog; listings stay private until checkout activates access.")}</p><Link className="mt-2 inline-flex items-center gap-1 font-bold text-[#075b43]" to="/dashboard/billing">{t("Choose a plan")} <ArrowRight size={14} /></Link></div></div>}
     {showCreate && <Card className="mt-6 p-5 sm:p-6">
       <div className="flex items-start justify-between gap-4"><div><p className="eyebrow">{t(editingId ? "Update your catalog" : "Grow your catalog")}</p><h2 className="font-display text-xl font-bold">{`${t(editingId ? "Edit" : "Add")} ${t(type.slice(0, -1))}`}</h2><p className="mt-1 text-sm text-muted">{t(type === "offers" ? "Make the offer clear and easy for customers to understand." : "Add a photo and a few helpful details so customers know what to expect.")}</p></div><span className="icon-tile"><Icon size={18} /></span></div>
@@ -647,6 +661,7 @@ export function ResourcePage({ type }: { type: ResourceType }) {
         </> : <>
           <div><Label htmlFor="item-name">{t(type === "products" ? "Product name" : "Service name")}</Label><Input id="item-name" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder={t(type === "products" ? "e.g. Handmade ceramic pot" : "e.g. Event catering")} /></div>
           <div><Label htmlFor="item-price">{t(type === "products" ? "Price" : "Starting price")}</Label><Input id="item-price" type="number" min="0" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} placeholder="0" /></div>
+          {type === "services" && <div className="sm:col-span-2 rounded-xl border border-[#dcebe5] bg-[#f7fbf9] p-3.5"><label className="flex items-start justify-between gap-3"><span><span className="block text-sm font-bold">{t("Allow online booking")}</span><span className="mt-0.5 block text-[11px] leading-4 text-muted">{t("Customers can choose an available time. You can pause this at any time.")}</span></span><input type="checkbox" checked={form.isBookable} onChange={(event) => setForm({ ...form, isBookable: event.target.checked })} className="mt-1 size-4 accent-[#087553]" /></label><div className="mt-3 grid grid-cols-3 gap-2"><div><Label htmlFor="service-duration">{t("Duration (min)")}</Label><Input id="service-duration" type="number" min="5" max="720" value={form.durationMinutes} onChange={(event) => setForm({ ...form, durationMinutes: event.target.value })} /></div><div><Label htmlFor="service-buffer">{t("Buffer (min)")}</Label><Input id="service-buffer" type="number" min="0" max="240" value={form.bufferMinutes} onChange={(event) => setForm({ ...form, bufferMinutes: event.target.value })} /></div><div><Label htmlFor="service-capacity">{t("Capacity")}</Label><Input id="service-capacity" type="number" min="1" max="100" value={form.capacity} onChange={(event) => setForm({ ...form, capacity: event.target.value })} /></div></div></div>}
         </>}
         <div className="sm:col-span-2"><Label htmlFor="item-description">{t("Description")}</Label><Textarea id="item-description" value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder={t(type === "products" ? "What makes this product special?" : "What should customers know about this service?")} /></div>
         {(type === "products" || type === "services") && <div className="sm:col-span-2"><ImageUploadField title={t(type === "products" ? "Product image" : "Service image")} description={t("Show customers what they can expect. JPEG, PNG, WebP or GIF · up to 8 MB.")} value={form.imageUrl} onChange={(imageUrl) => setForm({ ...form, imageUrl })} /></div>}
@@ -654,14 +669,14 @@ export function ResourcePage({ type }: { type: ResourceType }) {
       {createMutation.isError && <div className="mt-4"><ErrorNotice message={createMutation.error.message} /></div>}
       {deleteMutation.isError && <div className="mt-4"><ErrorNotice message={deleteMutation.error.message} /></div>}
       {publishMutation.isError && <div className="mt-4"><ErrorNotice message={publishMutation.error.message} /></div>}
-      <div className="mt-5 flex justify-end gap-2"><Button variant="secondary" onClick={() => { setShowCreate(false); setEditingId(null); }}>{t("Cancel")}</Button><Button loading={createMutation.isPending} disabled={createMutation.isPending || (type === "offers" ? !form.title.trim() : !form.name.trim())} onClick={() => createMutation.mutate()}>{t(editingId ? "Save changes" : "Save")}</Button></div>
+      <div className="mt-5 flex justify-end gap-2"><Button variant="secondary" onClick={() => { setShowCreate(false); setEditingId(null); }}>{t("Cancel")}</Button><Button loading={createMutation.isPending} disabled={createMutation.isPending || (type === "offers" ? !form.title.trim() : !form.name.trim()) || (type === "services" && form.isBookable && !Number(form.durationMinutes))} onClick={() => createMutation.mutate()}>{t(editingId ? "Save changes" : "Save")}</Button></div>
     </Card>}
     {dataQuery.isError && <div className="mt-6"><ErrorNotice message={dataQuery.error.message} /></div>}
     {deleteMutation.isError && !showCreate && <div className="mt-5"><ErrorNotice message={deleteMutation.error.message} /></div>}
     {publishMutation.isError && !showCreate && <div className="mt-5"><ErrorNotice message={publishMutation.error.message} /></div>}
     {dataQuery.isLoading ? <p className="mt-8 text-sm text-muted">{t("Loading")} {t(title.toLowerCase())}…</p> : items.length ? <div className="mt-8 grid gap-5 md:grid-cols-2 xl:grid-cols-3">{items.map((item) => <Card key={item.id} className="group overflow-hidden transition hover:-translate-y-1 hover:shadow-card">
       {type !== "offers" && <div className="relative aspect-[16/9] overflow-hidden bg-gradient-to-br from-violet-soft to-coral-soft">{item.imageUrl ? <img src={resolveAssetUrl(item.imageUrl)} alt={item.name ? `${item.name} image` : ""} className="size-full object-cover transition duration-500 group-hover:scale-105" /> : <div className="grid size-full place-items-center text-violet/70"><Image size={30} strokeWidth={1.5} /></div>}<span className="absolute right-3 top-3"><Badge tone={item.isActive || item.isPublished ? "success" : "neutral"}>{item.isActive || item.isPublished ? "Published" : "Hidden"}</Badge></span></div>}
-      <div className="p-5"><div className="flex items-start justify-between gap-3"><div><p className="font-display text-lg font-bold">{item.name ?? item.title}</p><p className="mt-2 min-h-10 text-sm text-muted">{item.description}</p></div>{type === "offers" && <Badge tone={item.isActive ? "success" : "neutral"}>{item.isActive ? "Active" : "Hidden"}</Badge>}</div><div className="mt-5 flex items-center justify-between border-t border-line pt-4"><span className="font-bold">{type === "products" ? money(item.price ?? 0) : type === "services" ? `From ${money(item.startingPrice ?? 0)}` : `${item.discountType === "PERCENTAGE" ? `${item.discountValue}%` : money(item.discountValue ?? 0)} OFF`}</span></div><div className="mt-4 flex flex-wrap gap-2"><Button variant="secondary" onClick={() => openEdit(item)} icon={<Pencil size={15} />}>{t("Edit")}</Button><Button variant="ghost" disabled={type === "products" && !item.isPublished && !businessInfo?.canPublishProducts} onClick={() => publishMutation.mutate({ item, active: type === "offers" ? !item.isActive : !item.isPublished })}>{(type === "offers" ? item.isActive : item.isPublished) ? (type === "offers" ? "Deactivate" : "Unpublish") : (type === "offers" ? "Activate" : "Publish")}</Button><Button variant="ghost" aria-label={`Delete ${item.name ?? item.title ?? "item"}`} onClick={() => deleteMutation.mutate(item.id)} icon={<Trash2 size={16} />}>{t("Delete")}</Button></div></div></Card>)}</div> : <Card className="mt-8 p-10 text-center"><p className="font-display text-lg font-bold">{t("No")} {t(title.toLowerCase())} {t("yet")}</p><p className="mt-2 text-sm text-muted">{t("Add your first")} {t(type.slice(0, -1))} {t("to show it here.")}</p></Card>}
+      <div className="p-5"><div className="flex items-start justify-between gap-3"><div><p className="font-display text-lg font-bold">{item.name ?? item.title}</p><p className="mt-2 min-h-10 text-sm text-muted">{item.description}</p></div>{type === "offers" && <Badge tone={item.isActive ? "success" : "neutral"}>{item.isActive ? "Active" : "Hidden"}</Badge>}</div><div className="mt-5 flex items-center justify-between border-t border-line pt-4"><span className="font-bold">{type === "products" ? money(item.price ?? 0) : type === "services" ? `From ${money(item.startingPrice ?? 0)}${item.durationMinutes ? ` · ${item.durationMinutes} min` : ""}` : `${item.discountType === "PERCENTAGE" ? `${item.discountValue}%` : money(item.discountValue ?? 0)} OFF`}</span>{type === "services" && item.isBookable && <Badge tone="success">{t("Bookable")}</Badge>}</div><div className="mt-4 flex flex-wrap gap-2"><Button variant="secondary" onClick={() => openEdit(item)} icon={<Pencil size={15} />}>{t("Edit")}</Button><Button variant="ghost" disabled={type === "products" && !item.isPublished && !businessInfo?.canPublishProducts} onClick={() => publishMutation.mutate({ item, active: type === "offers" ? !item.isActive : !item.isPublished })}>{(type === "offers" ? item.isActive : item.isPublished) ? (type === "offers" ? "Deactivate" : "Unpublish") : (type === "offers" ? "Activate" : "Publish")}</Button><Button variant="ghost" aria-label={`Delete ${item.name ?? item.title ?? "item"}`} onClick={() => deleteMutation.mutate(item.id)} icon={<Trash2 size={16} />}>{t("Delete")}</Button></div></div></Card>)}</div> : <Card className="mt-8 p-10 text-center"><p className="font-display text-lg font-bold">{t("No")} {t(title.toLowerCase())} {t("yet")}</p><p className="mt-2 text-sm text-muted">{t("Add your first")} {t(type.slice(0, -1))} {t("to show it here.")}</p></Card>}
   </div>;
 }
 
@@ -701,7 +716,9 @@ export function AnalyticsPage() {
   const { t } = useLanguage();
   const { data: user } = useCurrentUser();
   const { data: analytics, isLoading, isError, error } = useBusinessAnalytics<AnalyticsRecord>(user?.business?.id);
-  const funnel: Array<[string, number]> = [["Visitors", analytics?.funnel.visitors ?? 0], ["Actions", analytics?.funnel.actions ?? 0], ["Requests", analytics?.funnel.requests ?? 0], ["Quotes", analytics?.funnel.quotes ?? 0], ["Accepted", analytics?.funnel.acceptedQuotes ?? 0]];
-  const actions: Array<[LucideIcon, string, number]> = [[MessageCircle, "WhatsApp", analytics?.whatsappClicks ?? 0], [FileText, "Quote request", analytics?.requests ?? 0], [Phone, "Call", analytics?.phoneClicks ?? 0], [BarChart3, "Directions", analytics?.directionsClicks ?? 0]];
+  const funnel: Array<[string, number]> = [["Visitors", analytics?.funnel.visitors ?? 0], ["Actions", analytics?.funnel.actions ?? 0], ["Requests", analytics?.funnel.requests ?? 0], ["Quotes", analytics?.funnel.quotes ?? 0], ["Accepted", analytics?.funnel.acceptedQuotes ?? 0], ["Bookings", analytics?.funnel.bookings ?? 0]];
+  const actions: Array<[LucideIcon, string, number]> = [[MessageCircle, "WhatsApp", analytics?.whatsappClicks ?? 0], [FileText, "Quote request", analytics?.requests ?? 0], [CalendarDays, "Booking clicks", analytics?.bookingClicks ?? 0], [Phone, "Call", analytics?.phoneClicks ?? 0], [BarChart3, "Directions", analytics?.directionsClicks ?? 0]];
   return <div className="mx-auto max-w-7xl"><Heading as="h1">{t("Analytics")}</Heading><p className="mt-2 text-muted">{t("See how discovery becomes customer action—and where to improve.")}</p>{isError && <div className="mt-5"><ErrorNotice message={error.message} /></div>}<div className="mt-8 grid grid-cols-2 gap-4 md:grid-cols-4"><Stat label={t("Page views")} value={isLoading ? "—" : String(analytics?.pageViews ?? 0)} /><Stat label={t("Total actions")} value={isLoading ? "—" : String(analytics?.funnel.actions ?? 0)} /><Stat label={t("Requests")} value={isLoading ? "—" : String(analytics?.requests ?? 0)} /><Stat label={t("Accepted quote value")} value={isLoading ? "—" : money(analytics?.quoteValue ?? 0)} /></div><div className="mt-6 grid gap-6 lg:grid-cols-[1.2fr_.8fr]"><Card className="p-6"><p className="font-display text-lg font-bold">{t("Conversion journey")}</p><p className="mt-1 text-sm text-muted">{t("From page view to accepted quote")}</p><div className="mt-8 space-y-3">{funnel.map(([label, value], index) => <div key={label} className="flex items-center gap-4"><span className="w-24 text-sm text-muted">{t(label)}</span><div className="h-10 min-w-12 rounded-lg bg-violet-soft" style={{ width: `${Math.max(12, value / Math.max(analytics?.pageViews ?? 1, 1) * 100)}%` }}><span className="flex h-full items-center px-4 text-sm font-bold text-violet">{isLoading ? "…" : value.toLocaleString()}</span></div></div>)}</div></Card><Card className="p-6"><p className="font-display text-lg font-bold">{t("Top customer actions")}</p><div className="mt-6 space-y-5">{actions.map(([Icon, label, value]) => <div key={label} className="flex items-center gap-3"><span className="icon-tile"><Icon size={17} /></span><div className="flex-1"><div className="flex justify-between text-sm"><strong>{t(label)}</strong><span>{isLoading ? "…" : value}</span></div><div className="mt-2 h-1.5 rounded-full bg-line"><div className="h-full rounded-full bg-coral" style={{ width: `${Math.min(100, value / Math.max(actions[0]![2], 1) * 100)}%` }} /></div></div></div>)}</div></Card></div></div>;
 }
+
+

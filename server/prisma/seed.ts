@@ -55,6 +55,7 @@ async function main() {
         country: "Rwanda",
         isPublished: true,
         canPublishProducts: true,
+        productAccessExpiresAt: new Date(Date.now() + 365 * 86400000),
         coverImageUrl: "https://images.unsplash.com/photo-1665333048952-a3ee97714c6b?auto=format&fit=crop&w=1200&q=85",
       },
       create: {
@@ -71,11 +72,16 @@ async function main() {
         country: "Rwanda",
         isPublished: true,
         canPublishProducts: true,
+        productAccessExpiresAt: new Date(Date.now() + 365 * 86400000),
         coverImageUrl: "https://images.unsplash.com/photo-1665333048952-a3ee97714c6b?auto=format&fit=crop&w=1200&q=85",
       },
     });
     seeded.push({ id: business.id, slug: business.slug, name: business.name });
     await prisma.$transaction([
+      prisma.booking.deleteMany({ where: { businessId: business.id } }),
+      prisma.availabilityBlock.deleteMany({ where: { businessId: business.id } }),
+      prisma.availabilityWindow.deleteMany({ where: { businessId: business.id } }),
+      prisma.bookingSettings.deleteMany({ where: { businessId: business.id } }),
       prisma.customerRequest.deleteMany({ where: { businessId: business.id } }),
       prisma.requestTemplate.deleteMany({ where: { businessId: business.id } }),
       prisma.businessEvent.deleteMany({ where: { businessId: business.id } }),
@@ -92,7 +98,37 @@ async function main() {
       ],
     });
     await prisma.service.create({
-      data: { businessId: business.id, name: `${item.category} service`, description: `Professional service from ${item.name}.`, startingPrice: new Prisma.Decimal(25000 + index * 5000), currency: "RWF", category: item.category, duration: "By arrangement" },
+      data: {
+        businessId: business.id,
+        name: `${item.category} consultation`,
+        description: `A focused appointment with a professional from ${item.name}.`,
+        startingPrice: new Prisma.Decimal(25000 + index * 5000),
+        currency: "RWF",
+        category: item.category,
+        duration: "60 minutes",
+        durationMinutes: 60,
+        bufferMinutes: 15,
+        capacity: 1,
+        isBookable: true,
+      },
+    });
+    await prisma.bookingSettings.create({
+      data: {
+        businessId: business.id,
+        isEnabled: true,
+        timezone: "Africa/Kigali",
+        slotIntervalMinutes: 30,
+        minNoticeMinutes: 120,
+        maxAdvanceDays: 60,
+        cancellationCutoffMinutes: 240,
+        requireConfirmation: true,
+      },
+    });
+    await prisma.availabilityWindow.createMany({
+      data: [1, 2, 3, 4, 5, 6].flatMap((weekday) => [
+        { businessId: business.id, weekday, startMinute: 9 * 60, endMinute: 12 * 60 },
+        { businessId: business.id, weekday, startMinute: 14 * 60, endMinute: 17 * 60 },
+      ]),
     });
     await prisma.offer.create({
       data: { businessId: business.id, title: "Welcome offer", description: "A special offer for new customers.", discountType: "PERCENTAGE", discountValue: new Prisma.Decimal(10), startsAt: new Date(Date.now() - 2 * 86400000), endsAt: new Date(Date.now() + 30 * 86400000), isActive: true },
@@ -168,40 +204,45 @@ function questionsFor(category: string): Array<{ label: string; type: "TEXT" | "
   const templates: Record<string, Array<{ label: string; type: "TEXT" | "TEXTAREA" | "NUMBER" | "SELECT" | "DATE" | "LOCATION"; required: boolean; options?: string[] }>> = {
     Mechanic: [
       { label: "What do you need?", type: "SELECT", required: true, options: ["Repair", "Maintenance", "Inspection", "Other"] },
-      { label: "Vehicle type", type: "TEXT", required: true },
-      { label: "Vehicle model", type: "TEXT", required: true },
-      { label: "Describe the problem", type: "TEXTAREA", required: true },
-      { label: "Location", type: "LOCATION", required: true },
+      { label: "Vehicle type", type: "TEXT", required: false },
+      { label: "Vehicle model", type: "TEXT", required: false },
+      { label: "Describe the problem", type: "TEXTAREA", required: false },
+      { label: "Location", type: "LOCATION", required: false },
       { label: "Preferred date", type: "DATE", required: false },
     ],
     Restaurant: [
       { label: "What would you like?", type: "TEXT", required: true },
-      { label: "Quantity", type: "NUMBER", required: true },
-      { label: "Pickup or delivery", type: "SELECT", required: true, options: ["Pickup", "Delivery"] },
+      { label: "Quantity", type: "NUMBER", required: false },
+      { label: "Pickup or delivery", type: "SELECT", required: false, options: ["Pickup", "Delivery"] },
       { label: "Location", type: "LOCATION", required: false },
       { label: "Special instructions", type: "TEXTAREA", required: false },
     ],
     Photographer: [
       { label: "Event type", type: "TEXT", required: true },
-      { label: "Event date", type: "DATE", required: true },
-      { label: "Event location", type: "LOCATION", required: true },
+      { label: "Event date", type: "DATE", required: false },
+      { label: "Event location", type: "LOCATION", required: false },
       { label: "Number of people", type: "NUMBER", required: false },
     ],
     Construction: [
       { label: "Project type", type: "TEXT", required: true },
-      { label: "Location", type: "LOCATION", required: true },
-      { label: "Service required", type: "TEXTAREA", required: true },
+      { label: "Location", type: "LOCATION", required: false },
+      { label: "Service required", type: "TEXTAREA", required: false },
       { label: "Budget", type: "NUMBER", required: false },
     ],
     Furniture: [
       { label: "Product", type: "TEXT", required: true },
-      { label: "Quantity", type: "NUMBER", required: true },
+      { label: "Quantity", type: "NUMBER", required: false },
       { label: "Material", type: "TEXT", required: false },
       { label: "Customization", type: "TEXTAREA", required: false },
       { label: "Delivery location", type: "LOCATION", required: false },
     ],
   };
-  return templates[category] ?? [{ label: "What do you need?", type: "TEXTAREA", required: true }];
+  return templates[category] ?? [
+    { label: "What service do you need?", type: "TEXT", required: true },
+    { label: "Anything that would help us prepare?", type: "TEXTAREA", required: false },
+    { label: "Preferred date", type: "DATE", required: false },
+    { label: "Location", type: "LOCATION", required: false },
+  ];
 }
 
 main()

@@ -1,4 +1,4 @@
-import { DiscountType, EventType, QuestionType, RequestStatus } from "@prisma/client";
+import { BookingStatus, DiscountType, EventType, QuestionType, RequestStatus } from "@prisma/client";
 import { z } from "zod";
 
 const imageUrlSchema = z.union([
@@ -71,6 +71,10 @@ export const serviceSchema = z.object({
   startingPrice: z.coerce.number().finite().min(0).max(9999999999).optional(),
   currency: z.string().length(3).default("RWF"),
   duration: z.string().max(100).nullable().optional(),
+  durationMinutes: z.number().int().min(5).max(1440).nullable().optional(),
+  bufferMinutes: z.number().int().min(0).max(240).optional(),
+  capacity: z.number().int().min(1).max(100).optional(),
+  isBookable: z.boolean().optional(),
   imageUrl: imageUrlSchema,
   category: z.string().max(100).optional(),
   customRequestEnabled: z.boolean().optional(),
@@ -112,7 +116,7 @@ export const customerRequestSchema = z.object({
   customerEmail: z.email().optional().or(z.literal("")),
   customerPhone: z.string().max(40).optional(),
   customerWhatsapp: z.string().max(40).optional(),
-  requestType: z.string().trim().min(1).max(120),
+  requestType: z.string().trim().min(1).max(120).default("Service request"),
   description: z.string().max(5000).optional(),
   orderNote: z.string().max(2000).optional(),
   orderItems: z.array(z.object({ productId: z.string().uuid(), quantity: z.coerce.number().int().min(1).max(1000) })).max(50).optional(),
@@ -187,7 +191,13 @@ export const eventSchema = z.object({
     type !== EventType.QUOTE_SENT &&
     type !== EventType.QUOTE_VIEWED &&
     type !== EventType.QUOTE_CHANGE_REQUESTED &&
-    type !== EventType.QUOTE_EXPIRED,
+    type !== EventType.QUOTE_EXPIRED &&
+    type !== EventType.BOOKING_CREATED &&
+    type !== EventType.BOOKING_CONFIRMED &&
+    type !== EventType.BOOKING_RESCHEDULED &&
+    type !== EventType.BOOKING_CANCELLED &&
+    type !== EventType.BOOKING_COMPLETED &&
+    type !== EventType.REVIEW_SUBMITTED,
   "This event is recorded by the server"),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
@@ -198,3 +208,83 @@ export const slugParamSchema = z.object({ slug: z.string().min(1).max(180) });
 export const requestNumberParamSchema = z.object({ requestNumber: z.string().regex(/^REQ-\d{6}$/) });
 export const publicQuoteTokenParamSchema = z.object({ publicToken: z.string().regex(/^[A-Za-z0-9_-]{32,100}$/) });
 export const requestStatusQuerySchema = z.object({ status: z.nativeEnum(RequestStatus).optional() });
+
+const timezoneSchema = z.string().trim().min(1).max(80).refine((value) => {
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: value }).format();
+    return true;
+  } catch {
+    return false;
+  }
+}, "Choose a valid timezone");
+
+export const bookingSettingsSchema = z.object({
+  isEnabled: z.boolean().optional(),
+  timezone: timezoneSchema.optional(),
+  slotIntervalMinutes: z.number().int().min(5).max(240).optional(),
+  minNoticeMinutes: z.number().int().min(0).max(20160).optional(),
+  maxAdvanceDays: z.number().int().min(1).max(365).optional(),
+  cancellationCutoffMinutes: z.number().int().min(0).max(20160).optional(),
+  requireConfirmation: z.boolean().optional(),
+});
+
+const availabilityWindowSchema = z.object({
+  weekday: z.number().int().min(1).max(7),
+  startMinute: z.number().int().min(0).max(1439),
+  endMinute: z.number().int().min(1).max(1440),
+  isActive: z.boolean().optional().default(true),
+}).refine((window) => window.endMinute > window.startMinute, { path: ["endMinute"], message: "Closing time must be after opening time" });
+
+export const availabilityWindowsSchema = z.object({ windows: z.array(availabilityWindowSchema).max(50) }).superRefine((input, context) => {
+  const active = input.windows.filter((window) => window.isActive);
+  for (let index = 0; index < active.length; index += 1) {
+    for (let compare = index + 1; compare < active.length; compare += 1) {
+      const left = active[index]!;
+      const right = active[compare]!;
+      if (left.weekday === right.weekday && left.startMinute < right.endMinute && right.startMinute < left.endMinute) {
+        context.addIssue({ code: "custom", path: ["windows"], message: "Availability windows cannot overlap on the same day" });
+      }
+    }
+  }
+});
+
+export const availabilityBlockSchema = z.object({
+  serviceId: z.uuid().nullable().optional(),
+  startsAt: z.coerce.date(),
+  endsAt: z.coerce.date(),
+  reason: z.string().trim().max(300).optional().default(""),
+}).refine((block) => block.endsAt > block.startsAt, { path: ["endsAt"], message: "Block end must be after its start" });
+
+export const publicAvailabilityQuerySchema = z.object({
+  serviceId: z.uuid(),
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
+export const createBookingSchema = z.object({
+  serviceId: z.uuid(),
+  startAt: z.coerce.date(),
+  customerName: z.string().trim().min(2).max(120),
+  customerPhone: z.string().trim().max(40).optional().or(z.literal("")),
+  customerEmail: z.email().optional().or(z.literal("")),
+  customerNote: z.string().max(2000).optional().default(""),
+}).refine((input) => Boolean(input.customerPhone?.trim() || input.customerEmail?.trim()), {
+  path: ["customerPhone"],
+  message: "Provide a phone number or email address so the business can contact you",
+});
+
+export const bookingStatusSchema = z.object({ status: z.nativeEnum(BookingStatus) });
+export const bookingScheduleSchema = z.object({ startAt: z.coerce.date() });
+export const bookingNoteSchema = z.object({ ownerNote: z.string().max(2000).default("") });
+export const bookingCancelSchema = z.object({ reason: z.string().trim().max(500).optional().default("") });
+export const publicBookingTokenParamSchema = z.object({ publicToken: z.string().regex(/^[A-Za-z0-9_-]{32,100}$/) });
+export const bookingReviewSchema = z.object({
+  rating: z.number().int().min(1).max(5),
+  comment: z.string().trim().max(2000).optional().default(""),
+});
+export const bookingListQuerySchema = z.object({
+  status: z.nativeEnum(BookingStatus).optional(),
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  search: z.string().trim().max(120).optional(),
+});

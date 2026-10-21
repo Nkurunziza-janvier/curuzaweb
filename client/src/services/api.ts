@@ -118,6 +118,26 @@ export const offerService = {
   setActive: <T>(id: string, active: boolean) => api.post<T>(`/offers/${encoded(id)}/${active ? "activate" : "deactivate"}`),
 };
 
+export const bookingService = {
+  getAvailability: <T>(slug: string, serviceId: string, from: string, to: string) =>
+    api.get<T>(`/public/businesses/${encoded(slug)}/bookings/availability?serviceId=${encoded(serviceId)}&from=${encoded(from)}&to=${encoded(to)}`),
+  create: <T>(slug: string, payload: unknown) => api.post<T>(`/public/businesses/${encoded(slug)}/bookings`, payload),
+  getPublic: <T>(publicToken: string) => api.get<T>(`/public/bookings/${encoded(publicToken)}`),
+  cancelPublic: <T>(publicToken: string, reason?: string) => api.post<T>(`/public/bookings/${encoded(publicToken)}/cancel`, { reason }),
+  reviewPublic: <T>(publicToken: string, rating: number, comment: string) => api.post<T>(`/public/bookings/${encoded(publicToken)}/reviews`, { rating, comment }),
+  getSettings: <T>(businessId: string) => api.get<T>(`/businesses/${encoded(businessId)}/booking-settings`),
+  updateSettings: <T>(businessId: string, payload: unknown) => api.patch<T>(`/businesses/${encoded(businessId)}/booking-settings`, payload),
+  replaceWindows: <T>(businessId: string, windows: unknown) => api.put<T>(`/businesses/${encoded(businessId)}/availability`, { windows }),
+  createBlock: <T>(businessId: string, payload: unknown) => api.post<T>(`/businesses/${encoded(businessId)}/availability-blocks`, payload),
+  deleteBlock: <T>(businessId: string, blockId: string) => api.del<T>(`/businesses/${encoded(businessId)}/availability-blocks/${encoded(blockId)}`),
+  listByBusiness: <T>(businessId: string) => api.get<T[]>(`/businesses/${encoded(businessId)}/bookings`),
+  summary: <T>(businessId: string) => api.get<T>(`/businesses/${encoded(businessId)}/bookings/summary`),
+  get: <T>(id: string) => api.get<T>(`/bookings/${encoded(id)}`),
+  updateStatus: <T>(id: string, status: string) => api.patch<T>(`/bookings/${encoded(id)}/status`, { status }),
+  reschedule: <T>(id: string, startAt: string) => api.patch<T>(`/bookings/${encoded(id)}/schedule`, { startAt }),
+  updateNote: <T>(id: string, ownerNote: string) => api.patch<T>(`/bookings/${encoded(id)}/note`, { ownerNote }),
+};
+
 export const analyticsService = {
   get: <T>(businessId: string) => api.get<T>(`/businesses/${encoded(businessId)}/analytics`),
   getEvents: <T>(businessId: string) => api.get<T[]>(`/businesses/${encoded(businessId)}/analytics/events`),

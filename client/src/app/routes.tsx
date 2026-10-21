@@ -12,6 +12,8 @@ const PricingPage = lazy(() => import("../pages/PricingPage"));
 const RequestPage = lazy(() => import("../pages/RequestPage"));
 const QuotePage = lazy(() => import("../pages/QuotePage"));
 const ActionPage = lazy(() => import("../pages/ActionPage"));
+const BookingPage = lazy(() => import("../pages/BookingPage"));
+const BookingStatusPage = lazy(() => import("../pages/BookingStatusPage"));
 const OnboardingPage = lazy(() => import("../pages/OnboardingPage"));
 const NotFoundPage = lazy(() => import("../pages/NotFoundPage"));
 const AuthPage = lazy(() => import("../pages/AuthPages").then((module) => ({ default: module.AuthPage })));
@@ -28,6 +30,9 @@ const AdminBusinessesPage = lazy(() => import("../pages/AdminPages").then((modul
 const AdminActivityPage = lazy(() => import("../pages/AdminPages").then((module) => ({ default: module.AdminActivityPage })));
 const AdminPaymentsPage = lazy(() => import("../pages/SubscriptionPages").then((module) => ({ default: module.AdminPaymentsPage })));
 const BillingPage = lazy(() => import("../pages/SubscriptionPages").then((module) => ({ default: module.BillingPage })));
+const BookingsPage = lazy(() => import("../pages/BookingDashboardPages").then((module) => ({ default: module.BookingsPage })));
+const BookingDetailPage = lazy(() => import("../pages/BookingDashboardPages").then((module) => ({ default: module.BookingDetailPage })));
+const AvailabilityPage = lazy(() => import("../pages/AvailabilityPage"));
 
 function LoadingFallback() {
   const { t } = useLanguage();
@@ -65,6 +70,8 @@ export const router = createBrowserRouter([
   { path: "onboarding", element: <ProtectedRoute><Page><OnboardingPage /></Page></ProtectedRoute> },
   { path: "b/:businessSlug", element: <Page><PublicBusinessPage /></Page> },
   { path: "b/:businessSlug/request", element: <Page><RequestPage /></Page> },
+  { path: "b/:businessSlug/book", element: <Page><BookingPage /></Page> },
+  { path: "bookings/:publicToken", element: <Page><BookingStatusPage /></Page> },
   { path: "b/:businessSlug/:action", element: <Page><ActionPage /></Page> },
   { path: "q/:publicToken", element: <Page><QuotePage /></Page> },
   {
@@ -74,6 +81,9 @@ export const router = createBrowserRouter([
       { index: true, element: <Page><DashboardHome /></Page> },
       { path: "requests", element: <Page><RequestsPage /></Page> },
       { path: "requests/:requestId", element: <Page><RequestDetailPage /></Page> },
+      { path: "bookings", element: <Page><BookingsPage /></Page> },
+      { path: "bookings/:bookingId", element: <Page><BookingDetailPage /></Page> },
+      { path: "availability", element: <Page><AvailabilityPage /></Page> },
       { path: "quotes", element: <Page><ResourcePage type="quotes" /></Page> },
       { path: "quotes/new", element: <Page><CreateQuotePage /></Page> },
       { path: "quotes/:quoteId", element: <Page><QuoteDetailPage /></Page> },

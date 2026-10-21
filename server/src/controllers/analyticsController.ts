@@ -21,12 +21,15 @@ export const getAnalytics = asyncHandler(async (request, response) => {
   const business = await prisma.business.findUnique({ where: { id: businessId }, select: { id: true } });
   if (!business) throw notFound("Business not found");
 
-  const [eventCounts, requests, quotes, acceptedQuotes, quoteValue] = await Promise.all([
+  const [eventCounts, requests, quotes, acceptedQuotes, quoteValue, bookings, completedBookings, upcomingBookings] = await Promise.all([
     prisma.businessEvent.groupBy({ by: ["eventType"], where: { businessId }, _count: { _all: true } }),
     prisma.customerRequest.count({ where: { businessId } }),
     prisma.quote.count({ where: { businessId } }),
     prisma.quote.count({ where: { businessId, status: "ACCEPTED" } }),
     prisma.quote.aggregate({ where: { businessId, status: "ACCEPTED" }, _sum: { total: true } }),
+    prisma.booking.count({ where: { businessId, status: { in: ["PENDING", "CONFIRMED", "COMPLETED"] } } }),
+    prisma.booking.count({ where: { businessId, status: "COMPLETED" } }),
+    prisma.booking.count({ where: { businessId, status: "CONFIRMED", startAt: { gte: new Date() } } }),
   ]);
   const counts = new Map<EventType, number>(eventCounts.map((event) => [event.eventType, event._count?._all ?? 0]));
   const pageViews = counts.get(EventType.PAGE_VIEW) ?? 0;
@@ -47,7 +50,12 @@ export const getAnalytics = asyncHandler(async (request, response) => {
     calls: phoneClicks,
     directions: directionsClicks,
     quoteValue: Number(quoteValue._sum.total ?? 0),
-    funnel: { visitors: pageViews, actions: actionCount, requests, quotes, acceptedQuotes },
+    bookingClicks: counts.get(EventType.BOOKING_CLICK) ?? 0,
+    bookings,
+    completedBookings,
+    upcomingBookings,
+    reviewsSubmitted: counts.get(EventType.REVIEW_SUBMITTED) ?? 0,
+    funnel: { visitors: pageViews, actions: actionCount, requests, quotes, acceptedQuotes, bookings, completedBookings },
   });
 });
 

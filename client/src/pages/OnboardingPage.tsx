@@ -1,4 +1,5 @@
-import { ArrowLeft, ArrowRight, Check, Image, ImagePlus, MapPin, Store } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, ImagePlus, MapPin, ShoppingBag } from "lucide-react";
+import { BookingPhonePreview, BookingSetupStep, StorefrontPhonePreview, type BookingAvailabilityDay, type BookingDraft } from "../components/onboarding/BookingSetup";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router";
 import { Badge, Brand, Button, Card, Input, Label, Select } from "../components/ui";
@@ -6,9 +7,9 @@ import { LocationPicker, type Coordinates } from "../components/onboarding/Locat
 import { ImageUploadField } from "../components/ImageUploadField";
 import { LanguageSwitcher, useLanguage } from "../i18n";
 import { useCurrentUser } from "../hooks/apiHooks";
-import { businessService, productService, requestService, resolveAssetUrl, serviceService } from "../services/api";
+import { bookingService, businessService, productService, requestService, serviceService } from "../services/api";
 
-const steps = ["Business", "Category", "Location", "Contact", "Brand", "Your story", "Hours", "Products", "Services", "Actions", "Questions", "Preview", "Publish"];
+const steps = ["Business", "Category", "Location", "Contact", "Brand", "Your story", "Hours", "Products", "Booking", "Actions", "Questions", "Preview", "Publish"];
 const requestTypes = ["TEXT", "TEXTAREA", "NUMBER", "SELECT", "MULTI_SELECT", "DATE", "TIME", "FILE", "LOCATION", "PHONE", "EMAIL"] as const;
 const weekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] as const;
 type OpeningDay = { closed: boolean; opens: string; closes: string };
@@ -67,34 +68,49 @@ function formatOpeningSchedule(schedule: OpeningSchedule) {
   }).join("\n");
 }
 
+function timeToMinutes(value: string) {
+  const [hour, minute] = value.split(":").map(Number);
+  return Number.isFinite(hour) && Number.isFinite(minute) ? hour * 60 + minute : 0;
+}
+
+function bookingWindowsFromSchedule(schedule: OpeningSchedule) {
+  return weekdays.flatMap((day, index) => {
+    const hours = schedule[day];
+    if (hours.closed) return [];
+    const startMinute = timeToMinutes(hours.opens);
+    const endMinute = timeToMinutes(hours.closes);
+    return endMinute > startMinute ? [{ weekday: index + 1, startMinute, endMinute, isActive: true }] : [];
+  });
+}
+
 function defaultQuestions(category: string) {
   const lowered = category.toLowerCase();
   if (lowered.includes("restaurant") || lowered.includes("food")) return [
     { label: "What would you like?", type: "TEXT", required: true },
-    { label: "Quantity", type: "NUMBER", required: true },
-    { label: "Pickup or delivery", type: "SELECT", required: true, options: ["Pickup", "Delivery"] },
+    { label: "Quantity", type: "NUMBER", required: false },
+    { label: "Pickup or delivery", type: "SELECT", required: false, options: ["Pickup", "Delivery"] },
     { label: "Location", type: "LOCATION", required: false },
     { label: "Special instructions", type: "TEXTAREA", required: false },
   ];
   if (lowered.includes("photo")) return [
     { label: "Event type", type: "TEXT", required: true },
-    { label: "Event date", type: "DATE", required: true },
-    { label: "Event location", type: "LOCATION", required: true },
+    { label: "Event date", type: "DATE", required: false },
+    { label: "Event location", type: "LOCATION", required: false },
     { label: "Number of people", type: "NUMBER", required: false },
     { label: "Package", type: "TEXT", required: false },
     { label: "Budget", type: "NUMBER", required: false },
   ];
   if (lowered.includes("construction")) return [
     { label: "Project type", type: "TEXT", required: true },
-    { label: "Location", type: "LOCATION", required: true },
+    { label: "Location", type: "LOCATION", required: false },
     { label: "Property size", type: "TEXT", required: false },
-    { label: "Service required", type: "TEXTAREA", required: true },
+    { label: "Service required", type: "TEXTAREA", required: false },
     { label: "Budget", type: "NUMBER", required: false },
     { label: "Photos", type: "FILE", required: false },
   ];
   if (lowered.includes("furniture")) return [
     { label: "Product", type: "TEXT", required: true },
-    { label: "Quantity", type: "NUMBER", required: true },
+    { label: "Quantity", type: "NUMBER", required: false },
     { label: "Size", type: "TEXT", required: false },
     { label: "Material", type: "TEXT", required: false },
     { label: "Customization", type: "TEXTAREA", required: false },
@@ -102,19 +118,24 @@ function defaultQuestions(category: string) {
   ];
   if (lowered.includes("auto") || lowered.includes("mechanic")) return [
     { label: "What do you need?", type: "SELECT", required: true, options: ["Repair", "Maintenance", "Inspection", "Other"] },
-    { label: "Vehicle type", type: "TEXT", required: true },
-    { label: "Vehicle model", type: "TEXT", required: true },
-    { label: "Describe the problem", type: "TEXTAREA", required: true },
+    { label: "Vehicle type", type: "TEXT", required: false },
+    { label: "Vehicle model", type: "TEXT", required: false },
+    { label: "Describe the problem", type: "TEXTAREA", required: false },
     { label: "Upload photo", type: "FILE", required: false },
-    { label: "Location", type: "LOCATION", required: true },
+    { label: "Location", type: "LOCATION", required: false },
     { label: "Preferred date", type: "DATE", required: false },
   ];
   return [
     { label: "What service do you need?", type: "TEXT", required: true },
-    { label: "Tell us more", type: "TEXTAREA", required: true },
+    { label: "Anything that would help us prepare?", type: "TEXTAREA", required: false },
     { label: "Preferred date", type: "DATE", required: false },
     { label: "Location", type: "LOCATION", required: false },
   ];
+}
+
+interface BookingSettingsSetup {
+  requireConfirmation: boolean;
+  slotIntervalMinutes: number;
 }
 
 interface BusinessSetup {
@@ -168,10 +189,24 @@ export default function OnboardingPage() {
   const [serviceDescription, setServiceDescription] = useState("");
   const [servicePrice, setServicePrice] = useState("");
   const [serviceImageUrl, setServiceImageUrl] = useState("");
+  const [serviceDuration, setServiceDuration] = useState("60");
+  const [serviceBookable, setServiceBookable] = useState(true);
+  const [bookingRequireConfirmation, setBookingRequireConfirmation] = useState(true);
+  const [bookingSlotInterval, setBookingSlotInterval] = useState("30");
+  const [createdProductId, setCreatedProductId] = useState("");
+  const [createdServiceId, setCreatedServiceId] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [businessLoaded, setBusinessLoaded] = useState(false);
   const progress = Math.round(((step + 1) / steps.length) * 100);
+
+  useEffect(() => {
+    if (!businessId) return;
+    void bookingService.getSettings<BookingSettingsSetup>(businessId).then((settings) => {
+      setBookingRequireConfirmation(settings.requireConfirmation);
+      setBookingSlotInterval(String(settings.slotIntervalMinutes));
+    }).catch(() => { /* Booking settings are optional until the first service is created. */ });
+  }, [businessId]);
 
   useEffect(() => {
     if (!businessId) return;
@@ -227,10 +262,46 @@ export default function OnboardingPage() {
         await businessService.update(businessId, { openingHours: display ? { display } : null });
       }
       if (step === 7 && productName.trim()) {
-        await productService.create(businessId, { name: productName.trim(), description: productDescription.trim(), price: Number(productPrice || 0), currency: "RWF", category: productCategory.trim(), imageUrl: productImageUrl || null });
+        const payload = { name: productName.trim(), description: productDescription.trim(), price: Number(productPrice || 0), currency: "RWF", category: productCategory.trim(), imageUrl: productImageUrl || null };
+        if (createdProductId) await productService.update(createdProductId, payload);
+        else {
+          const created = await productService.create<{ id: string }>(businessId, payload);
+          setCreatedProductId(created.id);
+        }
       }
       if (step === 8 && serviceName.trim()) {
-        await serviceService.create(businessId, { name: serviceName.trim(), description: serviceDescription.trim(), startingPrice: Number(servicePrice || 0), currency: "RWF", imageUrl: serviceImageUrl || null, isPublished: true });
+        const durationMinutes = Number(serviceDuration);
+        const payload = {
+          name: serviceName.trim(),
+          description: serviceDescription.trim(),
+          startingPrice: Number(servicePrice || 0),
+          currency: "RWF",
+          imageUrl: serviceImageUrl || null,
+          duration: serviceBookable && durationMinutes > 0 ? `${durationMinutes} minutes` : null,
+          durationMinutes: serviceBookable && durationMinutes > 0 ? durationMinutes : null,
+          bufferMinutes: 15,
+          capacity: 1,
+          isBookable: serviceBookable && durationMinutes > 0,
+        };
+        if (createdServiceId) await serviceService.update(createdServiceId, payload);
+        else {
+          const created = await serviceService.create<{ id: string }>(businessId, { ...payload, isPublished: true });
+          setCreatedServiceId(created.id);
+        }
+        if (serviceBookable && durationMinutes > 0) {
+          await bookingService.updateSettings(businessId, {
+            isEnabled: true,
+            timezone: "Africa/Kigali",
+            slotIntervalMinutes: Number(bookingSlotInterval),
+            minNoticeMinutes: 120,
+            maxAdvanceDays: 60,
+            cancellationCutoffMinutes: 240,
+            requireConfirmation: bookingRequireConfirmation,
+          });
+          const scheduledWindows = bookingWindowsFromSchedule(openingSchedule);
+          const windows = scheduledWindows.length ? scheduledWindows : [1, 2, 3, 4, 5].map((weekday) => ({ weekday, startMinute: 9 * 60, endMinute: 17 * 60, isActive: true }));
+          await bookingService.replaceWindows(businessId, windows);
+        }
       }
       if (step === 12) {
         await businessService.publish(businessId, true);
@@ -248,13 +319,44 @@ export default function OnboardingPage() {
     }
   };
 
+  const scheduledBookingWindows = bookingWindowsFromSchedule(openingSchedule);
+  const usingFallbackBookingHours = scheduledBookingWindows.length === 0;
+  const bookingAvailability: BookingAvailabilityDay[] = weekdays.map((day, index) => {
+    const configured = scheduledBookingWindows.find((window) => window.weekday === index + 1);
+    const closed = configured ? false : usingFallbackBookingHours ? index > 4 : true;
+    const startMinute = configured?.startMinute ?? 9 * 60;
+    const endMinute = configured?.endMinute ?? 17 * 60;
+    const toTime = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`;
+    return { day, closed, hours: `${formatTime(toTime(startMinute))} – ${formatTime(toTime(endMinute))}` };
+  });
+  const bookingDraft: BookingDraft = {
+    name: serviceName,
+    description: serviceDescription,
+    price: servicePrice,
+    duration: serviceDuration,
+    imageUrl: serviceImageUrl,
+    bookable: serviceBookable,
+    requireConfirmation: bookingRequireConfirmation,
+    slotInterval: bookingSlotInterval,
+  };
+  const updateBookingDraft = (patch: Partial<BookingDraft>) => {
+    if (patch.name !== undefined) setServiceName(patch.name);
+    if (patch.description !== undefined) setServiceDescription(patch.description);
+    if (patch.price !== undefined) setServicePrice(patch.price);
+    if (patch.duration !== undefined) setServiceDuration(patch.duration);
+    if (patch.imageUrl !== undefined) setServiceImageUrl(patch.imageUrl);
+    if (patch.bookable !== undefined) setServiceBookable(patch.bookable);
+    if (patch.requireConfirmation !== undefined) setBookingRequireConfirmation(patch.requireConfirmation);
+    if (patch.slotInterval !== undefined) setBookingSlotInterval(patch.slotInterval);
+  };
+
   if (!businessLoaded) return <div className="grid min-h-screen place-items-center bg-cream"><div className="skeleton h-12 w-48 rounded-2xl" aria-label="Loading onboarding" /></div>;
 
   return <div className="min-h-screen bg-cream"><header className="border-b border-line bg-white"><div className="shell-wide flex h-17 items-center justify-between"><Brand /><LanguageSwitcher compact /><p className="text-xs font-semibold text-muted">{t("Setup")} {progress}% {t("complete")}</p></div></header>
     <div className="h-1 bg-line"><div className="h-full bg-coral transition-all" style={{ width: `${progress}%` }} /></div>
     <main className="shell-wide grid gap-10 py-8 lg:grid-cols-[1fr_.8fr] lg:py-14">
-      <section className="mx-auto w-full max-w-xl"><Badge tone="violet">{t("Step")} {step + 1} · {t(steps[step])}</Badge><h1 className="mt-5 font-display text-3xl font-bold tracking-tight">{step === 0 ? t("Let’s get your business online.") : step === 1 ? t("What kind of business is it?") : step === 2 ? t("Where can customers find you?") : step === 11 ? t("This is looking good.") : step === 12 ? t("Ready to welcome customers?") : `${t("Set up your")} ${t(steps[step]).toLowerCase()}.`}</h1><p className="mt-3 text-muted">{t("Every step is saved to your business profile so you can return later.")}</p>
-        <Card className="mt-8 p-6">
+      <section className={`mx-auto w-full ${step === 8 ? "max-w-2xl" : "max-w-xl"}`}><Badge tone="violet">{t("Step")} {step + 1} · {t(steps[step])}</Badge><h1 className="mt-5 font-display text-3xl font-bold tracking-tight">{step === 0 ? t("Let’s get your business online.") : step === 1 ? t("What kind of business is it?") : step === 2 ? t("Where can customers find you?") : step === 8 ? t("Make booking feel effortless.") : step === 11 ? t("This is looking good.") : step === 12 ? t("Ready to welcome customers?") : `${t("Set up your")} ${t(steps[step]).toLowerCase()}.`}</h1><p className="mt-3 text-muted">{step === 8 ? t("Set your first service, booking rules, and availability. Customers will see a simple, mobile-friendly booking experience.") : t("Every step is saved to your business profile so you can return later.")}</p>
+        <Card className={`mt-8 ${step === 8 ? "p-2.5 sm:p-4" : "p-6"}`}>
           {step === 0 && <div><Label htmlFor="business-name">{t("Business name")}</Label><Input id="business-name" required value={name} onChange={(event) => setName(event.target.value)} /></div>}
           {step === 1 && <div><Label htmlFor="category">{t("Business category")}</Label><Select id="category" value={category} onChange={(event) => setCategory(event.target.value)}><option>Restaurant</option><option>Mechanic</option><option>Beauty</option><option>Construction</option><option>Furniture</option><option>Photographer</option><option>Professional services</option><option>Other</option></Select></div>}
           {step === 2 && <div className="space-y-5"><div className="grid gap-4 sm:grid-cols-2"><div><Label htmlFor="city">{t("City")}</Label><Input id="city" autoComplete="address-level2" value={city} onChange={(event) => setCity(event.target.value)} placeholder="e.g. Kigali" /></div><div><Label htmlFor="location">Street or neighbourhood</Label><div className="relative"><MapPin className="absolute left-4 top-3.5 text-muted" size={18} /><Input className="pl-11" id="location" autoComplete="street-address" value={address} onChange={(event) => setAddress(event.target.value)} placeholder="e.g. KG 7 Ave, Kimihurura" /></div></div></div><LocationPicker coordinates={coordinates} onSelect={(next) => { setCoordinates(next); setLocationError(""); }} onGeolocationError={setLocationError} />{locationError && <p role="alert" className="text-sm text-coral-dark">{locationError}</p>}<p className="text-xs leading-relaxed text-muted">Your pin helps customers find the right place. The interactive picker uses OpenStreetMap; you can open your selected pin in Google Maps.</p></div>}
@@ -286,15 +388,17 @@ export default function OnboardingPage() {
             <label className="flex min-h-14 cursor-pointer items-center gap-3 rounded-xl bg-cream p-3 text-sm sm:p-4"><input className="size-4 shrink-0" type="checkbox" checked={appointmentOnly} onChange={(event) => setAppointmentOnly(event.target.checked)} /><span className="min-w-0"><strong className="block text-ink">By appointment only</strong><span className="mt-0.5 block text-xs leading-relaxed text-muted sm:text-sm">Don’t show set hours on your business page.</span></span></label>
             <p className="text-xs text-muted">You can change these hours any time from your dashboard.</p>
           </div>}
-          {step === 7 && <div className="space-y-4"><ImageUploadField title="Product photo" description="A clear photo helps customers choose. You can add products later from your dashboard." value={productImageUrl} onChange={setProductImageUrl} shape="wide" /><div><Label htmlFor="product-name">First product (optional)</Label><Input id="product-name" value={productName} onChange={(event) => setProductName(event.target.value)} placeholder="e.g. Fresh juice" /></div>{productName && <><div><Label htmlFor="product-description">Product description</Label><textarea id="product-description" rows={3} className="field min-h-20 resize-y" value={productDescription} onChange={(event) => setProductDescription(event.target.value)} placeholder="Describe what customers are buying" /></div><div className="grid gap-3 sm:grid-cols-2"><div><Label htmlFor="product-price">Price (RWF)</Label><Input id="product-price" type="number" min="0" value={productPrice} onChange={(event) => setProductPrice(event.target.value)} /></div><div><Label htmlFor="product-category">Category</Label><Input id="product-category" value={productCategory} onChange={(event) => setProductCategory(event.target.value)} placeholder="e.g. Drinks" /></div></div></>}<p className="text-sm text-muted">Product details are saved now. They become visible to customers after publishing is approved by an administrator.</p></div>}
-          {step === 8 && <div className="space-y-4"><ImageUploadField title="Service photo (optional)" description="Show customers what the service looks like." value={serviceImageUrl} onChange={setServiceImageUrl} shape="wide" /><div><Label htmlFor="service-name">First service (optional)</Label><Input id="service-name" value={serviceName} onChange={(event) => setServiceName(event.target.value)} placeholder="e.g. Custom catering" /></div>{serviceName && <><div><Label htmlFor="service-description">Service description</Label><textarea id="service-description" rows={3} className="field min-h-20 resize-y" value={serviceDescription} onChange={(event) => setServiceDescription(event.target.value)} placeholder="What does this service include?" /></div><div><Label htmlFor="service-price">Starting price (RWF)</Label><Input id="service-price" type="number" min="0" value={servicePrice} onChange={(event) => setServicePrice(event.target.value)} /></div></>}<p className="text-sm text-muted">You can add more services from your dashboard.</p></div>}
+          {step === 7 && <div className="space-y-4"><div className="flex items-start gap-3 rounded-2xl border border-[#dcebe5] bg-[#f4faf7] p-4"><span className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#e4f4eb] text-[#087553]"><ShoppingBag size={19} /></span><div><p className="text-sm font-bold text-[#24483c]">Products are ordered, not booked</p><p className="mt-1 text-xs leading-5 text-[#6d8178]">Customers add products to an order request. You confirm availability, the final price, and pickup or delivery. No payment is collected online.</p></div></div><ImageUploadField title="Product photo (optional)" description="A clear photo helps customers choose. You can add products later from your dashboard." value={productImageUrl} onChange={setProductImageUrl} shape="wide" /><div><Label htmlFor="product-name">First product (optional)</Label><Input id="product-name" value={productName} onChange={(event) => setProductName(event.target.value)} placeholder="e.g. Fresh juice" /></div>{productName && <><div><Label htmlFor="product-description">Product description</Label><textarea id="product-description" rows={3} className="field min-h-20 resize-y" value={productDescription} onChange={(event) => setProductDescription(event.target.value)} placeholder="Describe what customers are buying" /></div><div className="grid gap-3 sm:grid-cols-2"><div><Label htmlFor="product-price">Price (RWF)</Label><Input id="product-price" type="number" min="0" value={productPrice} onChange={(event) => setProductPrice(event.target.value)} /></div><div><Label htmlFor="product-category">Category</Label><Input id="product-category" value={productCategory} onChange={(event) => setProductCategory(event.target.value)} placeholder="e.g. Drinks" /></div></div></>}<p className="text-xs leading-5 text-muted">Products become visible after publishing is approved. You can add more from the dashboard.</p></div>}
+          {step === 8 && <BookingSetupStep draft={bookingDraft} onUpdate={updateBookingDraft} availability={bookingAvailability} usingFallbackHours={usingFallbackBookingHours} onEditHours={() => setStep(6)} />}
           {step === 9 && <div className="space-y-4">{[["Request a quote", "Collect a tailored customer request"], ["WhatsApp", "Let customers message your team"], ["Phone", "Let customers call your business"]].map(([title, desc]) => <div key={title} className="flex items-center gap-4 rounded-xl border border-line p-4"><span className="icon-tile"><Check size={16} /></span><span><strong className="block text-sm">{title}</strong><span className="text-xs text-muted">{desc}</span></span></div>)}<p className="text-xs text-muted">Request and contact actions are enabled on your public page when contact details are available.</p></div>}
           {step === 10 && <div className="space-y-3"><p className="text-sm text-muted">A {category.toLowerCase()} request form is ready. Its questions are saved to the server and can be changed later.</p>{defaultQuestions(category).map((question, index) => <div key={question.label} className="flex items-center justify-between rounded-lg border border-line px-3 py-2 text-sm"><span>{index + 1}. {question.label}</span><span className="text-xs text-muted">{question.required ? "Required" : "Optional"}</span></div>)}</div>}
           {step >= 11 && <div className="text-center"><span className="mx-auto grid size-16 place-items-center rounded-full bg-success-soft text-success"><Check size={28} /></span><p className="mt-5 font-display text-xl font-bold">{step === 12 ? "Everything is ready to publish" : "Your customer page is ready for review"}</p><p className="mt-2 text-sm text-muted">{name} · {category} · {city || "Location not set"}.</p><p className="mt-2 text-sm text-muted">Customers will see your story, opening hours, contact details, services, and approved products.</p></div>}
         </Card>
         {error && <p role="alert" className="mt-4 rounded-xl bg-coral-soft p-3 text-sm text-coral-dark">{error}</p>}
-        <div className="mt-8 flex justify-between"><Button variant="ghost" disabled={step === 0 || saving} onClick={() => setStep(step - 1)} icon={<ArrowLeft size={17} />}>{t("Back")}</Button><Button disabled={!name.trim() || saving} loading={saving} onClick={() => void saveAndContinue()}>{step === 12 ? t("Publish page") : t("Save & continue")} <ArrowRight size={17} /></Button></div>
+        <div className="mt-8 flex justify-between"><Button variant="ghost" disabled={step === 0 || saving} onClick={() => setStep(step - 1)} icon={<ArrowLeft size={17} />}>{t("Back")}</Button><Button disabled={!name.trim() || saving || (step === 8 && Boolean(serviceName.trim()) && serviceBookable && !(Number(serviceDuration) > 0))} loading={saving} onClick={() => void saveAndContinue()}>{step === 12 ? t("Publish page") : t("Save & continue")} <ArrowRight size={17} /></Button></div>
       </section>
-      <aside className="hidden lg:block"><p className="mb-3 text-center text-xs font-bold uppercase tracking-widest text-muted">Live mobile preview</p><div className="mx-auto w-72 rounded-[2rem] border-8 border-ink bg-white p-2 shadow-float"><div className="overflow-hidden rounded-[1.4rem]"><div className="relative h-40 bg-[#f0eee9]">{coverImageUrl ? <img src={resolveAssetUrl(coverImageUrl)} alt="" className="size-full object-cover" /> : <div className="grid size-full place-items-center bg-gradient-to-br from-violet-soft to-coral-soft text-violet"><Image size={30} /></div>}<div className="absolute inset-0 bg-gradient-to-t from-ink/40 to-transparent" /></div><div className="p-4"><div className="-mt-9 grid size-14 place-items-center overflow-hidden rounded-xl border-4 border-white bg-coral font-bold text-white shadow-card">{logoUrl ? <img src={resolveAssetUrl(logoUrl)} alt="" className="size-full object-cover" /> : <Store size={20} />}</div><p className="mt-2 font-display text-lg font-bold">{name || "Your business"}</p><p className="text-xs text-muted">{category} · {city || "Your city"}</p><div className="mt-4 grid grid-cols-2 gap-2"><span className="rounded-lg bg-coral p-2 text-center text-[.65rem] font-bold text-white">Request quote</span><span className="rounded-lg bg-ink p-2 text-center text-[.65rem] font-bold text-white">WhatsApp</span></div><div className="mt-4 space-y-2">{[Store, Image, MapPin].map((Icon, index) => <div key={index} className="flex items-center gap-2 rounded-lg border border-line p-2"><Icon size={13} className="text-coral" /><i className="h-2 w-28 rounded bg-line" /></div>)}</div></div></div></div></aside>
+      <aside className="hidden lg:block"><p className="mb-3 text-center text-xs font-bold uppercase tracking-widest text-muted">{t("Live mobile preview")}</p>{step === 8 ? <BookingPhonePreview branding={{ businessName: name, category, city, logoUrl, coverImageUrl }} draft={bookingDraft} availability={bookingAvailability} /> : <StorefrontPhonePreview branding={{ businessName: name, category, city, logoUrl, coverImageUrl }} />}</aside>
     </main></div>;
 }
+
+

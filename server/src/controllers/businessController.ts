@@ -86,15 +86,18 @@ const publicBusinessInclude = {
   offers: { where: { isActive: true, startsAt: { lte: new Date() }, endsAt: { gte: new Date() } }, orderBy: { endsAt: "asc" as const } },
   reviews: { where: { isPublished: true }, orderBy: { createdAt: "desc" as const }, take: 20 },
   requestTemplates: { where: { isActive: true }, include: { questions: { orderBy: { sortOrder: "asc" as const } } }, take: 1 },
+  bookingSettings: { select: { isEnabled: true, timezone: true, slotIntervalMinutes: true, minNoticeMinutes: true, maxAdvanceDays: true, cancellationCutoffMinutes: true, requireConfirmation: true } },
+  availabilityWindows: { where: { isActive: true }, select: { weekday: true, startMinute: true, endMinute: true }, orderBy: [{ weekday: "asc" as const }, { startMinute: "asc" as const }] },
 };
 
 export const getPublicBusiness = asyncHandler(async (request, response) => {
   const business = await prisma.business.findFirst({ where: { slug: getParam(request, "slug"), isBlocked: false }, include: publicBusinessInclude });
   if (!business || !business.isPublished) throw notFound("Business page not found");
-  const [ratingSummary, pageViews, customerRequests] = await Promise.all([
+  const [ratingSummary, pageViews, customerRequests, bookingCount] = await Promise.all([
     prisma.review.aggregate({ where: { businessId: business.id, isPublished: true }, _avg: { rating: true }, _count: { _all: true } }),
     prisma.businessEvent.count({ where: { businessId: business.id, eventType: "PAGE_VIEW" } }),
     prisma.customerRequest.count({ where: { businessId: business.id } }),
+    prisma.booking.count({ where: { businessId: business.id, status: { in: ["PENDING", "CONFIRMED", "COMPLETED"] } } }),
     prisma.businessEvent.create({ data: { businessId: business.id, eventType: "PAGE_VIEW" } }),
   ]);
   const { ownerId: _ownerId, onboardingStep: _onboardingStep, ...publicFields } = business;
@@ -102,7 +105,7 @@ export const getPublicBusiness = asyncHandler(async (request, response) => {
     ...publicFields,
     rating: Math.round((ratingSummary._avg.rating ?? 0) * 10) / 10,
     reviewCount: ratingSummary._count._all,
-    stats: { pageViews, customerRequests },
+    stats: { pageViews, customerRequests, bookings: bookingCount },
     requestTemplate: business.requestTemplates[0] ?? null,
   });
 });
@@ -242,6 +245,7 @@ export const listServices = asyncHandler(async (request, response) => {
 export const createService = asyncHandler(async (request, response) => {
   const input = serviceSchema.parse(request.body);
   const businessId = getParam(request, "businessId");
+  if (input.isBookable && !input.durationMinutes) throw badRequest("Add an appointment duration before enabling online booking for this service.");
   const hasAccess = await hasActiveCatalogPlan(businessId);
   return success(response, await prisma.service.create({
     data: { ...input, isPublished: hasAccess && input.isPublished !== false, businessId, startingPrice: new Prisma.Decimal(input.startingPrice ?? 0), description: input.description ?? "", category: input.category ?? "" },
@@ -256,19 +260,24 @@ export const getService = asyncHandler(async (request, response) => {
 
 export const updateService = asyncHandler(async (request, response) => {
   const input = serviceSchema.partial().parse(request.body);
-  if (input.isPublished === true) {
-    const service = await prisma.service.findUnique({ where: { id: getParam(request, "id") }, select: { businessId: true } });
-    if (!service) throw notFound("Service not found");
-    if (!await hasActiveCatalogPlan(service.businessId)) throw forbidden("An active publishing plan is required to publish services. Visit Billing to activate a plan.");
-  }
+  const id = getParam(request, "id");
+  const service = await prisma.service.findUnique({ where: { id }, select: { businessId: true, durationMinutes: true, isBookable: true } });
+  if (!service) throw notFound("Service not found");
+  if (input.isPublished === true && !await hasActiveCatalogPlan(service.businessId)) throw forbidden("An active publishing plan is required to publish services. Visit Billing to activate a plan.");
+  const nextBookable = input.isBookable ?? service.isBookable;
+  const nextDuration = input.durationMinutes === undefined ? service.durationMinutes : input.durationMinutes;
+  if (nextBookable && !nextDuration) throw badRequest("Add an appointment duration before enabling online booking for this service.");
   return success(response, await prisma.service.update({
-    where: { id: getParam(request, "id") },
+    where: { id },
     data: input.startingPrice === undefined ? input : { ...input, startingPrice: new Prisma.Decimal(input.startingPrice) },
   }));
 });
 
 export const deleteService = asyncHandler(async (request, response) => {
-  await prisma.service.delete({ where: { id: getParam(request, "id") } });
+  const id = getParam(request, "id");
+  const bookings = await prisma.booking.count({ where: { serviceId: id } });
+  if (bookings) throw badRequest("This service has bookings. Disable online booking instead of deleting it.");
+  await prisma.service.delete({ where: { id } });
   return response.status(204).end();
 });
 

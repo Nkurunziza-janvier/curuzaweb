@@ -9,15 +9,18 @@ import BusinessStorefront from "./BusinessStorefront";
 import { LanguageSwitcher, useLanguage } from "../i18n";
 
 export interface PublicProduct { id: string; name: string; description: string; price: number | string; currency: string; imageUrl: string | null; category: string; }
-export interface PublicService { id: string; name: string; description: string; startingPrice: number | string; currency: string; duration: string | null; imageUrl: string | null; }
+export interface PublicService { id: string; name: string; description: string; startingPrice: number | string; currency: string; duration: string | null; durationMinutes?: number | null; bufferMinutes?: number; capacity?: number; isBookable?: boolean; isPublished?: boolean; imageUrl: string | null; }
 export interface PublicOffer { id: string; title: string; description: string; discountType: "PERCENTAGE" | "FIXED"; discountValue: number | string; startsAt: string; endsAt: string; }
-export interface PublicReview { id: string; customerName: string; rating: number; comment: string; createdAt: string; }
+export interface PublicReview { id: string; customerName: string; rating: number; comment: string; createdAt: string; isVerified?: boolean; }
+export interface PublicBookingSettings { isEnabled: boolean; timezone: string; slotIntervalMinutes: number; minNoticeMinutes: number; maxAdvanceDays: number; cancellationCutoffMinutes: number; requireConfirmation: boolean; }
+export interface PublicAvailabilityWindow { weekday: number; startMinute: number; endMinute: number; }
 export interface PublicBusiness {
   id: string; slug: string; name: string; tagline: string; description: string; category: string; highlights: string[];
   logoUrl: string | null; coverImageUrl: string | null; phone: string | null; whatsapp: string | null; email: string | null;
   address: string | null; city: string | null; country: string; latitude: number | null; longitude: number | null;
-  openingHours: { display?: string } | null; rating: number; reviewCount: number; stats: { pageViews: number; customerRequests: number };
+  openingHours: { display?: string } | null; rating: number; reviewCount: number; stats: { pageViews: number; customerRequests: number; bookings?: number };
   products: PublicProduct[]; services: PublicService[]; offers: PublicOffer[]; reviews: PublicReview[];
+  bookingSettings?: PublicBookingSettings | null; availabilityWindows?: PublicAvailabilityWindow[];
 }
 
 export default function PublicBusinessPage() {
