@@ -1,4 +1,4 @@
-import { ArrowRight, BarChart3, Check, Eye, EyeOff, Globe2, LockKeyhole, Mail, Package, ShieldCheck, Store, Users } from "lucide-react";
+import { ArrowRight, BarChart3, Building2, Check, Eye, EyeOff, Globe2, LockKeyhole, Mail, Package, ShieldCheck, Sparkles, Store, UserRound, Users } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
@@ -167,34 +167,68 @@ export function AuthPage({ register = false }: { register?: boolean }) {
     </main>;
   }
 
+  const passwordStrength = values.password
+    ? Math.max(1, [values.password.length >= 8, /[a-z]/.test(values.password) && /[A-Z]/.test(values.password), /\d/.test(values.password), /[^A-Za-z0-9]/.test(values.password)].filter(Boolean).length)
+    : 0;
+  const strengthLabels = [t("Weak"), t("Fair"), t("Good"), t("Strong")];
+
   return <main className="register-page">
+    <div className="register-ambient register-ambient-a" aria-hidden="true" />
+    <div className="register-ambient register-ambient-b" aria-hidden="true" />
+    <div className="register-shell">
     <section className="register-form-side">
-      <header className="register-topbar"><Brand /><LanguageSwitcher compact /><p>{t("Already have an account?")} <Link to="/login">{t("Log in")}</Link></p></header>
+      <header className="register-topbar">
+        <Brand />
+        <div className="register-topbar-actions">
+          <LanguageSwitcher compact />
+          <span className="register-topbar-sep" aria-hidden="true" />
+          <p><span className="register-topbar-label">{t("Already have an account?")} </span><Link to="/login">{t("Log in")}</Link></p>
+        </div>
+      </header>
       <div className="register-main">
-        <div className="register-heading"><span className="register-step"><span>01</span> {t("CREATE YOUR ACCOUNT")}</span><h1>{t("Put your business")}<br /><em>{t("on the map.")}</em></h1><p>{t("Start with the essentials. We’ll help you build your business page next.")}</p></div>
+        <div className="register-heading">
+          <span className="register-step"><span className="register-step-number">01</span> {t("CREATE YOUR ACCOUNT")}<i aria-hidden="true" />{t("Step 1 of 3")}</span>
+          <h1>{t("Put your business")}<br /><em>{t("on the map.")}</em></h1>
+          <p>{t("Start with the essentials. We’ll help you build your business page next.")}</p>
+        </div>
         <form className="register-form" onSubmit={submit}>
           <div className="register-form-grid">
-            <div><Label htmlFor="business">{t("Business name")}</Label><Input id="business" required autoComplete="organization" value={values.businessName} onChange={(event) => setValues({ ...values, businessName: event.target.value })} placeholder={t("e.g. Imizi Home")} /></div>
-            <div><Label htmlFor="owner">{t("Your full name")}</Label><Input id="owner" required autoComplete="name" value={values.name} onChange={(event) => setValues({ ...values, name: event.target.value })} placeholder={t("e.g. Aline Uwimana")} /></div>
+            <div><Label htmlFor="business">{t("Business name")}</Label><div className="register-input-wrap"><Building2 size={17} aria-hidden="true" /><Input id="business" required autoComplete="organization" value={values.businessName} onChange={(event) => setValues({ ...values, businessName: event.target.value })} placeholder={t("e.g. Imizi Home")} /></div></div>
+            <div><Label htmlFor="owner">{t("Your full name")}</Label><div className="register-input-wrap"><UserRound size={17} aria-hidden="true" /><Input id="owner" required autoComplete="name" value={values.name} onChange={(event) => setValues({ ...values, name: event.target.value })} placeholder={t("e.g. Aline Uwimana")} /></div></div>
             <div className="register-field-wide"><Label htmlFor="register-email">{t("Work email")}</Label><div className="register-input-wrap"><Mail size={17} aria-hidden="true" /><Input id="register-email" required type="email" autoComplete="email" value={values.email} onChange={(event) => setValues({ ...values, email: event.target.value })} placeholder={t("you@business.com")} /></div></div>
-            <div className="register-field-wide"><div className="mb-2 flex items-center justify-between"><Label htmlFor="register-password">{t("Create a password")}</Label><span className="register-hint">{t("8 characters minimum")}</span></div><div className="register-input-wrap"><LockKeyhole size={17} aria-hidden="true" /><Input id="register-password" required minLength={8} autoComplete="new-password" type={showPassword ? "text" : "password"} value={values.password} onChange={(event) => setValues({ ...values, password: event.target.value })} placeholder={t("Choose a secure password")} /><button type="button" className="register-password-toggle" aria-label={showPassword ? t("Hide password") : t("Show password")} onClick={() => setShowPassword(!showPassword)}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></div>
+            <div className="register-field-wide"><div className="mb-2 flex items-center justify-between"><Label htmlFor="register-password">{t("Create a password")}</Label><span className="register-hint">{t("8 characters minimum")}</span></div><div className="register-input-wrap"><LockKeyhole size={17} aria-hidden="true" /><Input id="register-password" required minLength={8} autoComplete="new-password" type={showPassword ? "text" : "password"} value={values.password} onChange={(event) => setValues({ ...values, password: event.target.value })} placeholder={t("Choose a secure password")} /><button type="button" className="register-password-toggle" aria-label={showPassword ? t("Hide password") : t("Show password")} aria-pressed={showPassword} onClick={() => setShowPassword(!showPassword)}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>
+              {values.password && <div className="register-strength" data-level={passwordStrength}><span className="register-strength-bars" aria-hidden="true"><i /><i /><i /><i /></span><small aria-live="polite">{strengthLabels[passwordStrength - 1]}</small></div>}
+            </div>
           </div>
           {error && <p role="alert" className="register-error">{error}</p>}
           <Button type="submit" loading={loading} className="register-submit">{loading ? t("Creating your account…") : t("Create your account")} {!loading && <ArrowRight size={18} />}</Button>
           <p className="register-terms"><ShieldCheck size={16} /> {t("Your details are protected. By continuing, you agree to our Terms and Privacy Policy.")}</p>
         </form>
+        <div className="register-next">
+          <p>{t("What happens next")}</p>
+          <ol>
+            <li><span>01</span><div><b>{t("Create your account")}</b><small>{t("Your secure workspace is ready instantly.")}</small></div></li>
+            <li><span>02</span><div><b>{t("Build your page")}</b><small>{t("Add products, services and opening hours.")}</small></div></li>
+            <li><span>03</span><div><b>{t("Get discovered")}</b><small>{t("Share one link with every customer.")}</small></div></li>
+          </ol>
+        </div>
       </div>
-      <footer className="register-footer"><span>© {new Date().getFullYear()} e-businessRw</span><span>{t("Made for businesses ready to grow")}</span></footer>
+      <footer className="register-footer"><span>© {new Date().getFullYear()} e-businessRw</span><span className="register-footer-trust"><ShieldCheck size={14} /> {t("Secure account")}</span><span>{t("Made for businesses ready to grow")}</span></footer>
     </section>
     <aside className="register-showcase">
       <div className="register-showcase-orb register-showcase-orb-a" /><div className="register-showcase-orb register-showcase-orb-b" />
-      <div className="register-showcase-top"><span className="register-live-dot" /> {t("YOUR BUSINESS, MORE VISIBLE")}</div>
+      <div className="register-showcase-top"><span className="register-showcase-mark"><Store size={14} /></span> {t("YOUR BUSINESS, MORE VISIBLE")}<span className="register-live-dot" /></div>
       <div className="register-showcase-content"><p className="register-showcase-eyebrow">{t("A simpler way to grow")}</p><h2>{t("Everything your business needs to")} <span>{t("get discovered.")}</span></h2><p className="register-showcase-copy">{t("Create a page for your business, share what you offer, and make it easier for customers to reach you.")}</p>
         <div className="register-benefits"><div><span><Globe2 size={18} /></span><div><b>{t("Your own business page")}</b><small>{t("A shareable home for your business online.")}</small></div></div><div><span><Package size={18} /></span><div><b>{t("Products and services")}</b><small>{t("Show customers what you have to offer.")}</small></div></div><div><span><Users size={18} /></span><div><b>{t("Customer enquiries")}</b><small>{t("Keep requests and conversations organized.")}</small></div></div></div>
       </div>
-      <div className="register-preview" aria-hidden="true"><div className="register-preview-bar"><span className="register-preview-logo"><Store size={15} /></span><b>Imizi Home</b><span className="register-preview-status">● Published</span></div><div className="register-preview-cover"><div className="register-preview-copy"><small>HOME · LIVING · STYLE</small><b>Make room for<br />what matters.</b><i>Explore collection <ArrowRight size={12} /></i></div><div className="register-preview-vase register-vase-one" /><div className="register-preview-vase register-vase-two" /><div className="register-preview-leaf" /></div><div className="register-preview-bottom"><span><i /><i /><i /></span><small><strong>Products</strong> &nbsp; Services &nbsp; About</small></div></div>
+      <div className="register-preview-wrap">
+        <div className="register-preview-glow" aria-hidden="true" />
+        <div className="register-preview" aria-hidden="true"><div className="register-preview-bar"><span className="register-preview-logo"><Store size={15} /></span><b>Imizi Home</b><span className="register-preview-status">● Published</span></div><div className="register-preview-cover"><div className="register-preview-copy"><small>HOME · LIVING · STYLE</small><b>Make room for<br />what matters.</b><i>Explore collection <ArrowRight size={12} /></i></div><div className="register-preview-vase register-vase-one" /><div className="register-preview-vase register-vase-two" /><div className="register-preview-leaf" /></div><div className="register-preview-bottom"><span><i /><i /><i /></span><small><strong>Products</strong> &nbsp; Services &nbsp; About</small></div></div>
+        <div className="register-preview-note" aria-hidden="true"><span><Sparkles size={14} /></span><div><b>{t("New enquiry")}</b><small>{t("I’d like a quote for…")}</small></div></div>
+      </div>
       <div className="register-showcase-foot"><span><Check size={15} /> {t("Simple to set up")}</span><span><Check size={15} /> {t("Built for local business")}</span></div>
     </aside>
+    </div>
     {loading && <BrandLoader title="Creating your account" detail="Setting up your business workspace securely." />}
   </main>;
 }
