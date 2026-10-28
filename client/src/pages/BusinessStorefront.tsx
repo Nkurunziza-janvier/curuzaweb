@@ -1,6 +1,6 @@
-import { useMemo, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { Link } from "react-router";
-import { ArrowRight, BadgeCheck, CalendarDays, Camera, Check, Clock3, ExternalLink, Image as ImageIcon, Mail, MapPin, MessageCircle, Minus, Phone, Plus, Search, Share2, ShoppingBag, ShoppingCart, Star, Store, UtensilsCrossed, X } from "lucide-react";
+import { ArrowRight, BadgeCheck, CalendarDays, Camera, Clock3, ExternalLink, Image as ImageIcon, Mail, MapPin, MessageCircle, Minus, Phone, Plus, Search, Share2, ShoppingBag, ShoppingCart, Star, Store, UtensilsCrossed, X } from "lucide-react";
 import { resolveAssetUrl } from "../services/api";
 import { LanguageSwitcher, useLanguage } from "../i18n";
 import type { PublicBusiness, PublicProduct, PublicService } from "./PublicBusinessPage";
@@ -56,7 +56,7 @@ function themeFor(category: string) {
 }
 
 function SectionHeading({ icon, eyebrow, title, action }: { icon: ReactNode; eyebrow?: string; title: string; action?: ReactNode }) {
-  return <div className="mb-5 flex items-start justify-between gap-3"><div className="flex min-w-0 items-center gap-3"><span className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#e7f5ef] text-[#087553]">{icon}</span><div className="min-w-0">{eyebrow && <p className="text-[10px] font-bold uppercase tracking-[.16em] text-[#63907b]">{eyebrow}</p>}<h2 className="font-display text-lg font-bold tracking-tight text-[#123d37] sm:text-xl">{title}</h2></div></div>{action}</div>;
+  return <div className="sf-section-head"><div className="sf-section-title"><span className="sf-section-icon">{icon}</span><div className="sf-section-copy">{eyebrow && <p className="sf-eyebrow">{eyebrow}</p>}<h2>{title}</h2></div></div>{action}</div>;
 }
 
 export default function BusinessStorefront(props: BusinessStorefrontProps) {
@@ -66,6 +66,10 @@ export default function BusinessStorefront(props: BusinessStorefrontProps) {
     cartItems, cartCount, cartTotal, cartOpen, setCartOpen, copied, shareUrl, sharePage, addToCart,
     sendOrderRequest, changeCartQuantity, track, phoneLink, whatsappLink, directionsLink, openingHours,
   } = props;
+  const [activeSection, setActiveSection] = useState("home");
+  const cartCloseRef = useRef<HTMLButtonElement>(null);
+  const lastFocusedRef = useRef<HTMLElement | null>(null);
+
   const gallery = useMemo(() => {
     const images = [
       ...(business.coverImageUrl ? [{ id: "cover", url: business.coverImageUrl, label: `${business.name} cover` }] : []),
@@ -87,96 +91,263 @@ export default function BusinessStorefront(props: BusinessStorefrontProps) {
     { label: "Reviews", href: "#reviews", icon: <Star size={16} /> },
     { label: "Contact", href: "#contact", icon: <MessageCircle size={16} /> },
   ];
+  const sectionIds = sections.map((section) => section.href.slice(1)).join(" ");
   const location = [business.address, business.city, business.country].filter(Boolean).join(", ");
   const tagline = business.tagline;
   const heroDescription = business.description.split("\n").map((line) => line.trim()).filter((line) => line && !/^#{1,6}\s/.test(line) && !/^[-*]\s/.test(line)).map((line) => line.replace(/\*\*(.*?)\*\*/g, "$1").replace(/__(.*?)__/g, "$1")).join(" ").replace(/\s+/g, " ").trim();
   const requestUrl = `/b/${business.slug}/request`;
+  const initials = business.name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("");
 
-  return <div className="business-storefront min-h-screen bg-[#f1f8f7] pb-20 text-[#113c3b] sm:pb-0">
-    <header style={{ backgroundColor: theme.header }} className="sticky top-0 z-40 border-b border-white/10 text-white shadow-[0_5px_24px_rgba(0,42,32,.2)]">
-      <div className="mx-auto flex h-[70px] max-w-[1500px] items-center justify-between gap-4 px-4 sm:px-7 xl:px-10">
-        <a href="#home" className="flex min-w-0 items-center gap-3" aria-label="e-businessRw home">
-          <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-[#15bf7b] text-[#003d31]"><Store size={23} strokeWidth={2.7} /></span>
-          <span className="min-w-0"><span className="block truncate font-display text-lg font-extrabold leading-5 tracking-tight sm:text-xl">e-businessRw</span><span className="hidden text-[10px] font-medium tracking-wide text-emerald-100/75 sm:block">{t("Discover · Connect · Grow")}</span></span>
+  useEffect(() => {
+    const nodes = sectionIds.split(" ").map((id) => document.getElementById(id)).filter((node): node is HTMLElement => Boolean(node));
+    if (!nodes.length) return;
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio);
+      if (visible[0]) setActiveSection(visible[0].target.id);
+    }, { rootMargin: "-32% 0px -55% 0px", threshold: [0, 0.15, 0.4, 0.75] });
+    nodes.forEach((node) => observer.observe(node));
+    return () => observer.disconnect();
+  }, [sectionIds]);
+
+  useEffect(() => {
+    if (!cartOpen) return;
+    lastFocusedRef.current = document.activeElement as HTMLElement | null;
+    const previous = document.body.style.overflow;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setCartOpen(false); };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", onKey);
+    cartCloseRef.current?.focus();
+    return () => {
+      document.body.style.overflow = previous;
+      window.removeEventListener("keydown", onKey);
+      lastFocusedRef.current?.focus();
+    };
+  }, [cartOpen, setCartOpen]);
+
+  const navLink = (section: { label: string; href: string; icon: ReactNode }) => (
+    <a key={section.href} href={section.href} className="sf-tab" data-active={activeSection === section.href.slice(1)} onClick={() => setActiveSection(section.href.slice(1))}>{section.icon}{t(section.label)}</a>
+  );
+
+  return <div className="business-storefront">
+    <a href="#storefront-main" className="sf-skip-link">{t("Skip to content")}</a>
+
+    <header className="sf-header">
+      <div className="sf-header-main">
+        <a href="#home" className="sf-brand" aria-label={business.name}>
+          <span className="sf-brand-logo">{business.logoUrl ? <img src={resolveAssetUrl(business.logoUrl)} alt="" /> : <Store size={21} />}</span>
+          <span className="sf-brand-copy"><strong>{business.name}</strong><small>{business.category || t("Business")}</small></span>
         </a>
-        <nav aria-label="Business page" className="hidden items-center gap-1 xl:flex">{sections.map((section, index) => <a key={section.href} href={section.href} className={`inline-flex min-h-[70px] items-center gap-2 border-b-2 px-3 text-[12px] font-semibold transition ${index === 0 ? "border-emerald-400 text-white" : "border-transparent text-emerald-50/75 hover:border-white/35 hover:text-white"}`}>{section.icon}{t(section.label)}</a>)}</nav>
-        <div className="flex shrink-0 items-center gap-2">
-          <LanguageSwitcher compact />
-          <label className="hidden items-center gap-2 rounded-full border border-white/20 bg-white/5 px-3 py-2 text-white/75 xl:flex"><Search size={15} /><input aria-label={t("Search products and services")} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("Search")} className="w-24 bg-transparent text-xs text-white outline-none placeholder:text-white/55" /></label>
-          <button type="button" onClick={() => void sharePage()} className="hidden min-h-10 items-center gap-2 rounded-full border border-white/25 px-4 text-xs font-bold transition hover:bg-white/10 sm:flex"><Share2 size={15} />{copied ? t("Copied") : t("Share")}</button>
-          {whatsappLink && <a href={whatsappLink} target="_blank" rel="noreferrer" onClick={() => track("WHATSAPP_CLICK")} className="inline-flex min-h-10 items-center gap-2 rounded-full bg-[#12b978] px-3.5 text-xs font-extrabold text-white shadow-sm transition hover:bg-[#0aa56b] sm:px-4"><MessageCircle size={16} /><span className="hidden sm:inline">{t("Contact us")}</span></a>}
-          {products.length > 0 && <button type="button" onClick={() => setCartOpen(true)} aria-label={`${t("Open order")}, ${cartCount} ${t("items")}`} className="relative grid size-10 place-items-center rounded-full border border-white/20 text-white hover:bg-white/10"><ShoppingCart size={18} />{cartCount > 0 && <span className="absolute -right-1 -top-1 grid min-w-5 place-items-center rounded-full bg-[#f28c38] px-1 text-[10px] font-bold leading-5">{cartCount}</span>}</button>}
+        <div className="sf-header-tools">
+          <label className="sf-search sf-search-desktop"><Search size={16} aria-hidden="true" /><input aria-label={t("Search products and services")} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("Search products and services")} />{search && <button type="button" onClick={() => setSearch("")} aria-label={t("Clear search")}><X size={14} /></button>}</label>
+          <span className="sf-header-lang"><LanguageSwitcher compact /></span>
+          <button type="button" onClick={() => void sharePage()} className="sf-icon-btn" aria-label={copied ? t("Copied") : t("Share")}><Share2 size={17} /><span className="sf-tool-label">{copied ? t("Copied") : t("Share")}</span></button>
+          {whatsappLink && <a href={whatsappLink} target="_blank" rel="noreferrer" onClick={() => track("WHATSAPP_CLICK")} className="sf-btn sf-btn-whatsapp sf-header-cta"><MessageCircle size={16} />{t("Contact us")}</a>}
+          {products.length > 0 && <button type="button" onClick={() => setCartOpen(true)} aria-label={`${t("Open order")}, ${cartCount} ${t("items")}`} className="sf-icon-btn sf-cart-btn"><ShoppingCart size={18} />{cartCount > 0 && <span className="sf-cart-count">{cartCount}</span>}</button>}
+        </div>
+      </div>
+      <div className="sf-navbar">
+        <div className="sf-navbar-inner">
+          <nav aria-label={t("Business sections")} className="sf-tabs">{sections.map(navLink)}</nav>
+          <div className="sf-navbar-end">{openingHours && <span className="sf-hours-note"><Clock3 size={14} />{openingHours}</span>}<span className="sf-navbar-lang"><LanguageSwitcher compact /></span></div>
         </div>
       </div>
     </header>
 
-    <main>
-      <section id="home" className="storefront-hero relative isolate scroll-mt-20 overflow-hidden bg-[#003b30] text-white">
-        {business.coverImageUrl && <img src={resolveAssetUrl(business.coverImageUrl)} alt="" className="absolute inset-0 -z-20 size-full object-cover object-center" />}
-        <div className="absolute inset-0 -z-10" style={{ backgroundImage: theme.hero }} />
-        <div className="storefront-hero-glow pointer-events-none absolute -right-28 -top-44 -z-10 size-[34rem] rounded-full" />
-        <div className="mx-auto grid min-h-[440px] max-w-[1500px] items-center gap-7 px-4 py-10 sm:px-7 sm:py-14 lg:grid-cols-[210px_minmax(0,1fr)_auto] lg:gap-10 lg:py-16 xl:px-12">
-          <div className="grid size-36 place-items-center overflow-hidden rounded-[1.35rem] border border-white/60 bg-white/10 shadow-[0_18px_55px_rgba(0,0,0,.25)] backdrop-blur-sm sm:size-44 lg:size-48">{business.logoUrl ? <img src={resolveAssetUrl(business.logoUrl)} alt={`${business.name} logo`} className="size-full object-cover" /> : <Store size={54} className="text-emerald-300" />}</div>
-          <div className="max-w-3xl">
-            <div className="mb-3 flex flex-wrap items-center gap-2"><span className="rounded-full border border-emerald-200/30 bg-emerald-300/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[.15em] text-emerald-100">{business.category || "Business"}</span></div>
-            <h1 className="font-display text-4xl font-extrabold leading-[1.02] tracking-[-.055em] sm:text-5xl lg:text-[4.15rem]">{business.name}</h1>
-            {tagline && <p className="mt-3 text-base font-medium text-emerald-200 sm:text-lg">{tagline}</p>}
-            {location && <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-white/90"><span className="inline-flex items-center gap-2"><MapPin size={17} className="text-emerald-300" />{location}</span>{directionsLink && <a href={directionsLink} target="_blank" rel="noreferrer" onClick={() => track("DIRECTIONS_CLICK")} className="inline-flex items-center gap-1.5 font-bold text-emerald-300 hover:text-white">{t("View on maps")} <ArrowRight size={15} /></a>}</div>}
-            <div className="mt-4 flex flex-wrap items-center gap-4">{business.reviewCount > 0 && <div className="flex items-center gap-2"><span className="flex text-amber-400">{Array.from({ length: 5 }).map((_, index) => <Star key={index} size={17} className={index < Math.round(business.rating) ? "fill-current" : "opacity-35"} />)}</span><strong className="text-sm">{business.rating.toFixed(1)}</strong><span className="text-xs text-white/75">({business.reviewCount} {business.reviewCount === 1 ? t("review") : t("reviews")})</span></div>}{openingHours && <span className="inline-flex items-center gap-1.5 text-xs text-white/80"><Clock3 size={14} className="text-emerald-300" />{openingHours}</span>}</div>
-            {heroDescription && <p className="mt-4 max-w-2xl text-sm leading-6 text-white/85">{heroDescription.slice(0, 190)}{heroDescription.length > 190 ? "…" : ""}</p>}
-            <div className="mt-6 flex flex-wrap gap-3">{bookableServices.length ? <Link to={bookingUrl} onClick={() => track("BOOKING_CLICK")} style={{ backgroundColor: theme.accent, color: theme.accentText }} className="inline-flex min-h-12 items-center gap-2 rounded-xl px-5 text-sm font-extrabold shadow-lg shadow-black/15 transition hover:-translate-y-0.5 hover:brightness-105"><CalendarDays size={17} />{t("Book an appointment")} <ArrowRight size={16} /></Link> : <a href={business.services.length ? "#services" : "#contact"} style={{ backgroundColor: theme.accent, color: theme.accentText }} className="inline-flex min-h-12 items-center gap-2 rounded-xl px-5 text-sm font-extrabold shadow-lg shadow-black/15 transition hover:-translate-y-0.5 hover:brightness-105">{business.services.length ? t("View services") : t("Send a request")} <ArrowRight size={16} /></a>}{phoneLink && <a href={phoneLink} onClick={() => track("PHONE_CLICK")} className="inline-flex min-h-12 items-center gap-2 rounded-xl border border-white/30 bg-white/10 px-4 text-sm font-bold text-white backdrop-blur-sm transition hover:bg-white/15"><Phone size={15} />{t("Call")}</a>}</div>
+    <main id="storefront-main">
+      <section id="home" className="sf-hero" style={{ backgroundColor: theme.header }}>
+        {business.coverImageUrl && <img src={resolveAssetUrl(business.coverImageUrl)} alt="" className="sf-hero-img" />}
+        <div className="sf-hero-shade" style={{ backgroundImage: theme.hero }} />
+        <div className="sf-hero-glow" style={{ background: `radial-gradient(circle,${theme.glow},transparent 68%)` }} />
+        <div className="sf-container sf-hero-inner">
+          <div className="sf-hero-copy">
+            <div className="sf-hero-logo">{business.logoUrl ? <img src={resolveAssetUrl(business.logoUrl)} alt={`${business.name} logo`} /> : <Store size={38} />}</div>
+            <div className="sf-hero-badges">
+              <span className="sf-chip sf-chip-solid">{business.category || t("Business")}</span>
+              {business.reviewCount > 0 && <span className="sf-chip"><Star size={13} className="fill-current" />{business.rating.toFixed(1)}<span className="sf-chip-muted">({business.reviewCount})</span></span>}
+              {onlineBooking && <span className="sf-chip"><CalendarDays size={13} />{t("Book online")}</span>}
+            </div>
+            <h1>{business.name}</h1>
+            {tagline && <p className="sf-hero-tagline">{tagline}</p>}
+            {heroDescription && <p className="sf-hero-desc">{heroDescription.slice(0, 210)}{heroDescription.length > 210 ? "…" : ""}</p>}
+            <div className="sf-hero-actions">
+              {bookableServices.length
+                ? <Link to={bookingUrl} onClick={() => track("BOOKING_CLICK")} className="sf-btn sf-btn-hero-primary" style={{ backgroundColor: theme.accent, color: theme.accentText }}><CalendarDays size={17} />{t("Book an appointment")}<ArrowRight size={16} /></Link>
+                : <a href={business.services.length ? "#services" : "#contact"} className="sf-btn sf-btn-hero-primary" style={{ backgroundColor: theme.accent, color: theme.accentText }}>{business.services.length ? t("View services") : t("Send a request")}<ArrowRight size={16} /></a>}
+              {whatsappLink && <a href={whatsappLink} target="_blank" rel="noreferrer" onClick={() => track("WHATSAPP_CLICK")} className="sf-btn sf-btn-hero-ghost"><MessageCircle size={16} />{t("Chat on WhatsApp")}</a>}
+              {phoneLink && <a href={phoneLink} onClick={() => track("PHONE_CLICK")} className="sf-btn sf-btn-hero-ghost"><Phone size={15} />{t("Call")}</a>}
+            </div>
+            {location && <div className="sf-hero-location"><MapPin size={15} /><span>{location}</span>{directionsLink && <a href={directionsLink} target="_blank" rel="noreferrer" onClick={() => track("DIRECTIONS_CLICK")}>{t("View on maps")}<ExternalLink size={12} /></a>}</div>}
           </div>
-          <div className="hidden min-w-[150px] justify-items-end lg:grid">{openingHours && <div className="max-w-[210px] rounded-2xl border border-white/15 bg-[#00362b]/85 p-4 text-right shadow-xl backdrop-blur-md"><span className="mx-auto mb-2 block size-2.5 rounded-full bg-emerald-400 shadow-[0_0_0_5px_rgba(52,211,153,.12)]" /><p className="text-sm font-bold">{t("Hours")}</p><p className="mt-1 text-xs leading-5 text-white/70">{openingHours}</p></div>}</div>
         </div>
       </section>
 
-      <div className="sticky top-[70px] z-30 border-b border-[#dcebe8] bg-white/95 shadow-[0_5px_20px_rgba(20,74,67,.04)] backdrop-blur-xl xl:hidden">
-        <nav aria-label="Business sections" className="mx-auto flex max-w-[1500px] gap-1 overflow-x-auto px-3 py-2">{sections.map((section) => <a key={section.href} href={section.href} className="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-lg px-3 text-xs font-semibold text-[#315c57] hover:bg-[#eaf5f1] hover:text-[#087553]">{section.icon}{t(section.label)}</a>)}</nav>
-        <label className="mx-auto mb-2 flex max-w-[1500px] items-center gap-2 px-4 text-[#628078] sm:px-7"><Search size={15} /><input aria-label={t("Search products and services")} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("Search products and services")} className="min-h-8 w-full bg-transparent text-xs outline-none placeholder:text-[#94a6a0]" /></label>
-      </div>
-      <div className="hidden border-b border-[#dcebe8] bg-white/95 xl:block"><nav aria-label="Business sections" className="mx-auto flex max-w-[1500px] gap-2 overflow-x-auto px-7 xl:px-10">{sections.map((section, index) => <a key={section.href} href={section.href} className={`inline-flex min-h-12 items-center gap-2 border-b-2 px-3 text-xs font-semibold ${index === 0 ? "border-[#11a875] text-[#075b49]" : "border-transparent text-[#466560] hover:border-emerald-300 hover:text-[#075b49]"}`}>{section.icon}{t(section.label)}</a>)}</nav></div>
+      {(location || openingHours) && <div className="sf-container sf-info-wrap">
+        <div className="sf-info">
+          <div className="sf-info-grid">
+            {location && <div className="sf-info-item"><span className="sf-info-icon"><MapPin size={18} /></span><div><p className="sf-info-label">{t("Location")}</p><p className="sf-info-value">{location}</p>{directionsLink && <a href={directionsLink} target="_blank" rel="noreferrer" onClick={() => track("DIRECTIONS_CLICK")} className="sf-info-link">{t("View directions")}<ExternalLink size={11} /></a>}</div></div>}
+            {openingHours && <div className="sf-info-item"><span className="sf-info-icon"><Clock3 size={18} /></span><div><p className="sf-info-label">{t("Opening hours")}</p><p className="sf-info-value">{openingHours}</p></div></div>}
+            {phoneLink && <a href={phoneLink} onClick={() => track("PHONE_CLICK")} className="sf-info-item sf-info-item-link"><span className="sf-info-icon"><Phone size={18} /></span><div><p className="sf-info-label">{t("Call")}</p><p className="sf-info-value">{business.phone}</p></div></a>}
+          </div>
+          <div className="sf-info-actions">
+            {whatsappLink && <a href={whatsappLink} target="_blank" rel="noreferrer" onClick={() => track("WHATSAPP_CLICK")} className="sf-btn sf-btn-soft"><MessageCircle size={16} />{t("WhatsApp")}</a>}
+            <Link to={requestUrl} className="sf-btn sf-btn-primary">{t("Send a request")}<ArrowRight size={15} /></Link>
+          </div>
+        </div>
+      </div>}
 
-      {business.offers.length > 0 && <div className="mx-auto max-w-[1500px] px-4 pt-5 sm:px-7 xl:px-10">{business.offers.map((offer) => <article key={offer.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-emerald-100 bg-gradient-to-r from-[#e8f8ef] to-white px-5 py-4 shadow-sm"><div><p className="text-[10px] font-bold uppercase tracking-[.15em] text-[#398268]">{t("Current offer")}</p><h2 className="mt-1 font-display font-bold text-[#123d37]">{offer.title}</h2>{offer.description && <p className="mt-1 text-xs text-[#58716d]">{offer.description}</p>}</div><span className="rounded-xl bg-[#087553] px-4 py-2 text-sm font-extrabold text-white">{offer.discountType === "PERCENTAGE" ? `${Number(offer.discountValue)}% ${t("off")}` : currency(offer.discountValue)}</span></article>)}</div>}
+      {business.offers.length > 0 && <div className="sf-container sf-offers">{business.offers.map((offer) => <article key={offer.id} className="sf-offer"><div><p className="sf-eyebrow">{t("Current offer")}</p><h2>{offer.title}</h2>{offer.description && <p>{offer.description}</p>}</div><span className="sf-offer-badge">{offer.discountType === "PERCENTAGE" ? `${Number(offer.discountValue)}% ${t("off")}` : currency(offer.discountValue)}</span></article>)}</div>}
 
-      <div className="mx-auto grid max-w-[1500px] gap-5 px-4 py-5 sm:px-7 sm:py-7 xl:px-10 lg:grid-cols-[minmax(0,1fr)_minmax(260px,.34fr)]">
-        <div className="min-w-0 space-y-5">
-          <section id="products" className="scroll-mt-40 rounded-2xl border border-[#e0eeeb] bg-white p-5 shadow-[0_8px_28px_rgba(13,80,69,.045)] sm:p-6">
-            <SectionHeading icon={<ShoppingBag size={20} />} eyebrow={t("Browse the catalog")} title={t("Products")} action={<a href="#products" className="hidden items-center gap-1 text-[11px] font-bold text-[#07845d] sm:inline-flex">{products.length} {t("items")} <ArrowRight size={13} /></a>} />
-            {products.length > 0 ? <><div className="mb-4 flex flex-wrap gap-2">{categories.map((item) => <button type="button" key={item} onClick={() => setCategory(item)} className={`rounded-full border px-3.5 py-1.5 text-[11px] font-bold transition ${category === item ? "border-[#087553] bg-[#087553] text-white" : "border-[#dcebe5] bg-white text-[#54716a] hover:border-[#0e9b6e]"}`}>{category === "All" && item === "All" ? t("All") : item}</button>)}</div><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{visibleProducts.map((product) => <article key={product.id} className="group overflow-hidden rounded-xl border border-[#e4eeeb] bg-white shadow-[0_3px_12px_rgba(15,70,59,.04)] transition hover:-translate-y-1 hover:shadow-[0_12px_26px_rgba(15,70,59,.1)]"><div className="relative h-36 overflow-hidden bg-gradient-to-br from-[#e9f4ef] to-[#f8f7ee]">{product.imageUrl ? <img src={resolveAssetUrl(product.imageUrl)} alt={product.name} className="size-full object-cover transition duration-500 group-hover:scale-105" loading="lazy" /> : <div className="grid size-full place-items-center text-[#7ba998]"><ImageIcon size={28} /><span className="sr-only">{t("No product image")}</span></div>}{product.category && <span className="absolute left-2.5 top-2.5 rounded-full bg-white/90 px-2.5 py-1 text-[9px] font-bold text-[#38665b] shadow-sm">{product.category}</span>}</div><div className="p-3"><h3 className="truncate text-sm font-bold text-[#143e3b]">{product.name}</h3>{product.description && <p className="mt-1 line-clamp-2 min-h-8 text-[11px] leading-4 text-[#6a817b]">{product.description}</p>}<div className="mt-3 flex items-center justify-between gap-2"><p className="text-xs font-extrabold text-[#075b49]">{currency(product.price, product.currency)}</p><button type="button" onClick={() => addToCart(product)} className="inline-flex min-h-8 items-center gap-1.5 rounded-lg bg-[#087553] px-3 text-[10px] font-bold text-white transition hover:bg-[#056046]"><Plus size={13} />{t("Order")}</button></div></div></article>)}</div>{visibleProducts.length === 0 && <p className="rounded-xl bg-[#f4f9f7] p-5 text-sm text-[#627b76]">{t("No products match this search.")}</p>}</> : <div className="rounded-xl bg-[#f5faf8] p-5 text-sm leading-6 text-[#627b76]">{business.name} {t("has not published any products yet.")}</div>}
+      <div className="sf-container sf-layout">
+        <div className="sf-content">
+          {products.length > 0 && <section id="products" className="sf-card sf-section">
+            <SectionHeading icon={<ShoppingBag size={19} />} eyebrow={t("Browse the catalog")} title={t("Products")} action={<span className="sf-section-count">{products.length} {t("items")}</span>} />
+            <div className="sf-toolbar">
+              <div className="sf-chips">{categories.map((item) => <button type="button" key={item} onClick={() => setCategory(item)} className="sf-chip-btn" data-active={category === item}>{category === "All" && item === "All" ? t("All") : item}</button>)}</div>
+              <label className="sf-search sf-search-inline"><Search size={15} aria-hidden="true" /><input aria-label={t("Search products and services")} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("Search")} /></label>
+            </div>
+            {visibleProducts.length ? <div className="sf-products">{visibleProducts.map((product) => <article key={product.id} className="sf-product">
+              <div className="sf-product-media">
+                {product.imageUrl ? <img src={resolveAssetUrl(product.imageUrl)} alt={product.name} loading="lazy" /> : <span className="sf-product-placeholder"><ImageIcon size={26} /><span className="sr-only">{t("No product image")}</span></span>}
+                {product.category && <span className="sf-product-cat">{product.category}</span>}
+              </div>
+              <div className="sf-product-body">
+                <h3 className="sf-product-name">{product.name}</h3>
+                {product.description && <p className="sf-product-desc">{product.description}</p>}
+                <div className="sf-product-foot">
+                  <p className="sf-price">{currency(product.price, product.currency)}</p>
+                  <button type="button" onClick={() => addToCart(product)} className="sf-add"><Plus size={13} />{t("Order")}</button>
+                </div>
+              </div>
+            </article>)}</div> : <p className="sf-empty">{t("No products match this search.")}</p>}
+          </section>}
+
+          {bookableServices.length > 0 && <section id="booking" className="sf-booking" style={{ backgroundColor: theme.header }}>
+            <div className="sf-booking-head">
+              <div className="sf-booking-title"><span className="sf-booking-icon" style={{ color: theme.accent }}><CalendarDays size={21} /></span><div><p className="sf-eyebrow sf-eyebrow-light">{t("Reserve your time")}</p><h2>{t("Book an appointment")}</h2><p className="sf-booking-copy">{t("Choose a service, pick an available time, and receive a private booking link.")}</p></div></div>
+              <Link to={bookingUrl} onClick={() => track("BOOKING_CLICK")} className="sf-btn" style={{ backgroundColor: theme.accent, color: theme.accentText }}>{t("Start booking")}<ArrowRight size={15} /></Link>
+            </div>
+            <div className="sf-booking-services">{bookableServices.slice(0, 4).map((service) => <Link key={service.id} to={`/b/${business.slug}/book?service=${service.id}`} onClick={() => track("BOOKING_CLICK", { serviceId: service.id })} className="sf-booking-service"><span><strong>{service.name}</strong><small><Clock3 size={11} />{service.durationMinutes} {t("minutes")}</small></span><ArrowRight size={15} style={{ color: theme.accent }} /></Link>)}</div>
+          </section>}
+
+          {business.services.length > 0 && <section id="services" className="sf-card sf-section">
+            <SectionHeading icon={<UtensilsCrossed size={19} />} eyebrow={t("Ways we can help")} title={t("Services")} />
+            {visibleServices.length ? <div className="sf-services">{visibleServices.map((service) => <article key={service.id} className="sf-service">
+              <div className="sf-service-media">{service.imageUrl ? <img src={resolveAssetUrl(service.imageUrl)} alt="" loading="lazy" /> : <UtensilsCrossed size={22} />}</div>
+              <div className="sf-service-body">
+                <h3>{service.name}</h3>
+                {service.description && <p>{service.description}</p>}
+                <div className="sf-service-meta"><span className="sf-price">{t("From")} {currency(service.startingPrice, service.currency)}</span>{service.duration && <span className="sf-service-duration">{service.duration}</span>}</div>
+                {service.isBookable && service.durationMinutes && onlineBooking
+                  ? <Link to={`/b/${business.slug}/book?service=${service.id}`} onClick={() => track("BOOKING_CLICK", { serviceId: service.id })} className="sf-service-link"><CalendarDays size={14} />{t("Book online")}<ArrowRight size={14} /></Link>
+                  : <Link to={requestUrl} state={{ selectedService: { id: service.id, name: service.name } }} className="sf-service-link">{t("Request this service")}<ArrowRight size={14} /></Link>}
+              </div>
+            </article>)}</div> : <p className="sf-empty">{t("No services match this search.")}</p>}
+          </section>}
+
+          {gallery.length > 0 && <section id="gallery" className="sf-card sf-section">
+            <SectionHeading icon={<Camera size={19} />} eyebrow={t("From the catalog")} title={t("Gallery")} action={<span className="sf-section-count">{gallery.length} {t("photos")}</span>} />
+            <div className="sf-gallery" data-count={Math.min(gallery.length, 6)}>{gallery.slice(0, 6).map((image) => <img key={image.id} src={resolveAssetUrl(image.url)} alt={image.label} loading="lazy" />)}</div>
+          </section>}
+
+          <section id="reviews" className="sf-card sf-section">
+            <SectionHeading icon={<Star size={18} className="fill-current" />} eyebrow={t("Customer feedback")} title={t("Reviews")} action={business.reviewCount > 0 ? <span className="sf-section-count"><Star size={13} className="fill-current" />{business.rating.toFixed(1)} · {business.reviewCount}</span> : undefined} />
+            {business.reviews.length ? <div className="sf-reviews">{business.reviews.slice(0, 4).map((review) => <article key={review.id} className="sf-review">
+              <div className="sf-review-head">
+                <div className="sf-review-person"><span className="sf-avatar">{review.customerName.slice(0, 1).toUpperCase()}</span><div><strong>{review.customerName}{review.isVerified && <BadgeCheck size={13} aria-label={t("Verified customer")} />}</strong><time>{new Date(review.createdAt).toLocaleDateString()}</time></div></div>
+                <span className="sf-stars" aria-label={`${review.rating} / 5`}>{Array.from({ length: Math.max(0, Math.min(5, review.rating)) }).map((_, index) => <Star key={index} size={13} className="fill-current" />)}</span>
+              </div>
+              <p>{review.comment}</p>
+            </article>)}</div> : <div className="sf-empty sf-empty-row"><span className="sf-section-icon"><Star size={18} /></span><p>{t("No published reviews yet.")}</p></div>}
           </section>
-
-          {bookableServices.length > 0 && <section id="booking" style={{ background: `linear-gradient(135deg,${theme.header} 0%,${theme.header} 55%,${theme.header}cc 100%)` }} className="scroll-mt-40 overflow-hidden rounded-2xl border border-white/10 p-5 text-white shadow-[0_14px_36px_rgba(5,73,56,.16)] sm:p-6"><div className="flex flex-wrap items-start justify-between gap-4"><div className="flex items-center gap-3"><span style={{ color: theme.accent }} className="grid size-11 place-items-center rounded-xl bg-white/12"><CalendarDays size={22} /></span><div><p className="text-[10px] font-bold uppercase tracking-[.16em] text-emerald-100/75">{t("Reserve your time")}</p><h2 className="font-display text-xl font-bold">{t("Book an appointment")}</h2><p className="mt-1 text-xs leading-5 text-emerald-50/80">{t("Choose a service, pick an available time, and receive a private booking link.")}</p></div></div><Link to={bookingUrl} onClick={() => track("BOOKING_CLICK")} style={{ backgroundColor: theme.accent, color: theme.accentText }} className="inline-flex min-h-10 items-center gap-2 rounded-xl px-4 text-xs font-extrabold transition hover:brightness-105">{t("Start booking")} <ArrowRight size={15} /></Link></div><div className="mt-4 grid gap-2 sm:grid-cols-2">{bookableServices.slice(0, 4).map((service) => <Link key={service.id} to={`/b/${business.slug}/book?service=${service.id}`} onClick={() => track("BOOKING_CLICK", { serviceId: service.id })} className="flex items-center justify-between gap-3 rounded-xl border border-white/15 bg-white/8 px-3.5 py-3 transition hover:bg-white/15"><span className="min-w-0"><strong className="block truncate text-xs">{service.name}</strong><span className="mt-1 flex items-center gap-1.5 text-[10px] text-emerald-50/70"><Clock3 size={11} />{service.durationMinutes} {t("minutes")}</span></span><ArrowRight size={15} style={{ color: theme.accent }} className="shrink-0" /></Link>)}</div></section>}
-
-          {business.services.length > 0 && <section id="services" className="scroll-mt-40 rounded-2xl border border-[#e0eeeb] bg-white p-5 shadow-[0_8px_28px_rgba(13,80,69,.045)] sm:p-6"><SectionHeading icon={<UtensilsCrossed size={19} />} eyebrow={t("Ways we can help")} title={t("Services")} />{visibleServices.length ? <div className="grid gap-3 sm:grid-cols-2">{visibleServices.map((service) => <article key={service.id} className="flex min-w-0 gap-3 rounded-xl border border-[#e6efec] bg-[#fbfdfc] p-3.5">{service.imageUrl ? <img src={resolveAssetUrl(service.imageUrl)} alt="" className="size-[72px] shrink-0 rounded-lg object-cover" loading="lazy" /> : <span className="grid size-[72px] shrink-0 place-items-center rounded-lg bg-[#e8f5ef] text-[#0b8661]"><UtensilsCrossed size={23} /></span>}<div className="min-w-0 flex-1"><h3 className="truncate text-sm font-bold">{service.name}</h3>{service.description && <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-[#70857f]">{service.description}</p>}<div className="mt-2 flex flex-wrap items-center justify-between gap-2"><span className="text-[11px] font-extrabold text-[#087553]" >{t("From")} {currency(service.startingPrice, service.currency)}</span>{service.duration && <span className="text-[10px] text-[#81948e]">{service.duration}</span>}</div>{service.isBookable && service.durationMinutes && onlineBooking ? <Link to={`/b/${business.slug}/book?service=${service.id}`} onClick={() => track("BOOKING_CLICK", { serviceId: service.id })} className="mt-3 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#087553] to-[#0aa577] px-3 text-xs font-extrabold text-white shadow-sm shadow-emerald-900/10 transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#087553] focus-visible:ring-offset-2"><CalendarDays size={15} />{t("Book online")} <ArrowRight size={15} /></Link> : <Link to={requestUrl} state={{ selectedService: { id: service.id, name: service.name } }} className="mt-3 inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#087553] to-[#0aa577] px-3 text-xs font-extrabold text-white shadow-sm shadow-emerald-900/10 transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#087553] focus-visible:ring-offset-2">{t("Request this service")} <ArrowRight size={15} /></Link>}</div></article>)}</div> : <p className="text-sm text-[#718780]">{t("No services match this search.")}</p>}</section>}
         </div>
 
-        <aside className="grid content-start gap-5 sm:grid-cols-2 lg:grid-cols-1">
-          <section id="contact" className="scroll-mt-40 rounded-2xl border border-[#e0eeeb] bg-white p-5 shadow-[0_8px_28px_rgba(13,80,69,.045)] sm:p-6"><SectionHeading icon={<MessageCircle size={19} />} title={`Contact ${business.name}`} />
-            <p className="-mt-2 text-xs leading-5 text-[#718780]">Get in touch with the business for questions or service requests.</p>
-            {whatsappLink && <a href={whatsappLink} target="_blank" rel="noreferrer" onClick={() => track("WHATSAPP_CLICK")} className="mt-4 flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[#078c63] text-sm font-bold text-white transition hover:bg-[#067655]"><MessageCircle size={18} />{t("Chat on WhatsApp")}</a>}
-            {(phoneLink || business.email || location || openingHours) && <div className="mt-4 divide-y divide-[#eaf1ef]">{phoneLink && <a href={phoneLink} onClick={() => track("PHONE_CLICK")} className="flex items-center gap-3 py-3 text-xs font-semibold text-[#335c56]"><span className="grid size-9 place-items-center rounded-full bg-[#eaf5f3] text-[#087553]"><Phone size={16} /></span>{business.phone}</a>}{business.email && <a href={`mailto:${business.email}`} className="flex items-center gap-3 py-3 text-xs font-semibold text-[#335c56]"><span className="grid size-9 place-items-center rounded-full bg-[#eaf5f3] text-[#087553]"><Mail size={16} /></span><span className="min-w-0 truncate">{business.email}</span></a>}{location && <div className="flex items-start gap-3 py-3 text-xs font-semibold leading-5 text-[#335c56]"><span className="grid size-9 shrink-0 place-items-center rounded-full bg-[#eaf5f3] text-[#087553]"><MapPin size={16} /></span><span>{location}{directionsLink && <a href={directionsLink} target="_blank" rel="noreferrer" onClick={() => track("DIRECTIONS_CLICK")} className="mt-1 block text-[10px] font-bold text-[#07845d]">{t("View directions")} <ExternalLink size={11} className="inline" /></a>}</span></div>}{openingHours && <div className="flex items-start gap-3 py-3 text-xs text-[#54716a]"><span className="grid size-9 shrink-0 place-items-center rounded-full bg-[#eaf5f3] text-[#087553]"><Clock3 size={16} /></span><span><strong className="block text-[#335c56]">{t("Opening hours")}</strong><span className="mt-1 block leading-5">{openingHours}</span></span></div>}</div>}
-            <Link to={requestUrl} className="mt-4 flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[#0a9368] text-sm font-bold text-[#087553] transition hover:bg-[#eff9f4]">{t("Send a request")} <ArrowRight size={16} /></Link>
+        <aside className="sf-sidebar">
+          <section id="contact" className="sf-card sf-contact">
+            <SectionHeading icon={<MessageCircle size={19} />} title={`${t("Contact")} ${business.name}`} />
+            <p className="sf-contact-copy">{t("Get in touch with the business for questions or service requests.")}</p>
+            <div className="sf-contact-actions">
+              {whatsappLink && <a href={whatsappLink} target="_blank" rel="noreferrer" onClick={() => track("WHATSAPP_CLICK")} className="sf-btn sf-btn-whatsapp sf-btn-block"><MessageCircle size={17} />{t("Chat on WhatsApp")}</a>}
+              <Link to={requestUrl} className="sf-btn sf-btn-outline sf-btn-block">{t("Send a request")}<ArrowRight size={15} /></Link>
+            </div>
+            {(phoneLink || business.email || location || openingHours) && <div className="sf-contact-list">
+              {phoneLink && <a href={phoneLink} onClick={() => track("PHONE_CLICK")}><span className="sf-contact-icon"><Phone size={16} /></span><span><small>{t("Call")}</small><strong>{business.phone}</strong></span></a>}
+              {business.email && <a href={`mailto:${business.email}`}><span className="sf-contact-icon"><Mail size={16} /></span><span><small>{t("Email")}</small><strong>{business.email}</strong></span></a>}
+              {location && <div><span className="sf-contact-icon"><MapPin size={16} /></span><span><small>{t("Location")}</small><strong>{location}</strong>{directionsLink && <a href={directionsLink} target="_blank" rel="noreferrer" onClick={() => track("DIRECTIONS_CLICK")} className="sf-info-link">{t("View directions")}<ExternalLink size={11} /></a>}</span></div>}
+              {openingHours && <div><span className="sf-contact-icon"><Clock3 size={16} /></span><span><small>{t("Opening hours")}</small><strong>{openingHours}</strong></span></div>}
+            </div>}
+            <button type="button" onClick={() => void sharePage()} className="sf-share-row"><Share2 size={15} />{copied ? t("Copied") : t("Share this page")}</button>
           </section>
-          <section className="rounded-2xl border border-[#e0eeeb] bg-white p-5 shadow-[0_8px_28px_rgba(13,80,69,.045)] sm:p-6"><SectionHeading icon={<BadgeCheck size={19} />} title={t("At a glance")} /><div className="flex flex-wrap gap-2">{business.category && <span className="rounded-full bg-[#eff8f4] px-3 py-1.5 text-[10px] font-bold text-[#397166]">{business.category}</span>}{business.reviewCount > 0 && <span className="inline-flex items-center gap-1 rounded-full bg-[#fff8e8] px-3 py-1.5 text-[10px] font-bold text-[#93661a]"><Star size={12} className="fill-current" />{business.rating.toFixed(1)} · {business.reviewCount} {t("reviews")}</span>}{openingHours && <span className="inline-flex items-center gap-1 rounded-full bg-[#eff8f4] px-3 py-1.5 text-[10px] font-bold text-[#397166]"><Clock3 size={12} />{t("Hours listed")}</span>}</div>
-            <div className="mt-4 grid grid-cols-2 gap-2 border-t border-[#eaf1ef] pt-4"><div className="rounded-xl bg-[#f2f9f6] p-3"><p className="text-lg font-extrabold text-[#087553]">{business.stats.pageViews.toLocaleString()}</p><p className="text-[10px] text-[#718780]">{t("Page visits")}</p></div><div className="rounded-xl bg-[#f2f9f6] p-3"><p className="text-lg font-extrabold text-[#087553]">{business.stats.customerRequests.toLocaleString()}</p><p className="text-[10px] text-[#718780]">{t("Requests received")}</p></div>{typeof business.stats.bookings === "number" && business.stats.bookings > 0 && <div className="col-span-2 flex items-center gap-2 rounded-xl bg-[#eff8f4] px-3 py-2 text-[#397166]"><CalendarDays size={14} /><span className="text-[10px] font-bold">{business.stats.bookings} {t("appointments booked")}</span></div>}</div>
+
+          <section className="sf-card sf-glance">
+            <SectionHeading icon={<BadgeCheck size={19} />} title={t("At a glance")} />
+            <div className="sf-glance-chips">
+              {business.category && <span>{business.category}</span>}
+              {business.reviewCount > 0 && <span className="sf-glance-rating"><Star size={12} className="fill-current" />{business.rating.toFixed(1)} · {business.reviewCount} {t("reviews")}</span>}
+              {openingHours && <span><Clock3 size={12} />{t("Hours listed")}</span>}
+            </div>
+            <div className="sf-stats">
+              <div><strong>{business.stats.pageViews.toLocaleString()}</strong><small>{t("Page visits")}</small></div>
+              <div><strong>{business.stats.customerRequests.toLocaleString()}</strong><small>{t("Requests received")}</small></div>
+              {typeof business.stats.bookings === "number" && business.stats.bookings > 0 && <div className="sf-stats-wide"><CalendarDays size={14} /><span>{business.stats.bookings} {t("appointments booked")}</span></div>}
+            </div>
           </section>
         </aside>
       </div>
-
-      <div className={`mx-auto grid max-w-[1500px] items-start gap-5 px-4 pb-8 sm:px-7 ${gallery.length > 0 ? "lg:grid-cols-[1.15fr_1fr]" : "lg:grid-cols-1"} xl:px-10`}>
-        {gallery.length > 0 && <section id="gallery" className="scroll-mt-40 rounded-2xl border border-[#e0eeeb] bg-white p-5 shadow-[0_8px_28px_rgba(13,80,69,.045)] sm:p-6"><SectionHeading icon={<Camera size={19} />} eyebrow={t("From the catalog")} title={t("Gallery")} action={<span className="text-[11px] font-semibold text-[#718780]">{gallery.length} {t("photos")}</span>} /><div className="grid grid-cols-2 gap-2 sm:grid-cols-3">{gallery.slice(0, 6).map((image) => <img key={image.id} src={resolveAssetUrl(image.url)} alt={image.label} loading="lazy" className="h-28 w-full rounded-xl object-cover sm:h-32" />)}</div></section>}
-        <section id="reviews" className="scroll-mt-40 rounded-2xl border border-[#e0eeeb] bg-white p-5 shadow-[0_8px_28px_rgba(13,80,69,.045)] sm:p-6"><SectionHeading icon={<Star size={19} className="fill-current" />} eyebrow={t("Customer feedback")} title={t("Reviews")} action={business.reviewCount > 0 ? <span className="text-[11px] font-semibold text-[#718780]">{business.rating.toFixed(1)} · {business.reviewCount}</span> : undefined} />{business.reviews.length ? <div className="space-y-3">{business.reviews.slice(0, 3).map((review) => <article key={review.id} className="rounded-xl border border-[#e4eeeb] bg-[#fcfefd] p-4"><div className="flex flex-wrap items-center justify-between gap-2"><strong className="flex items-center gap-1 text-xs text-[#234f49]">{review.customerName}{review.isVerified && <BadgeCheck size={13} className="text-[#0a8a63]" aria-label={t("Verified customer")} />}</strong><span className="flex text-amber-400">{Array.from({ length: Math.max(0, Math.min(5, review.rating)) }).map((_, index) => <Star key={index} size={13} className="fill-current" />)}</span></div><p className="mt-2 text-xs leading-5 text-[#58716d]">{review.comment}</p><time className="mt-2 block text-[10px] text-[#8a9a95]">{new Date(review.createdAt).toLocaleDateString()}</time></article>)}</div> : <div className="rounded-xl bg-[#f5faf8] p-5 text-sm leading-6 text-[#627b76]">{t("No published reviews yet.")}</div>}</section>
-      </div>
     </main>
 
-    <footer className="bg-[#00382e] text-white"><div className="mx-auto grid max-w-[1500px] gap-7 px-4 py-7 sm:grid-cols-2 sm:px-7 lg:grid-cols-4 xl:px-10"><div><div className="flex items-center gap-2.5"><span className="grid size-9 place-items-center rounded-xl bg-emerald-400 text-[#00382e]">{business.logoUrl ? <img src={resolveAssetUrl(business.logoUrl)} alt="" className="size-full rounded-xl object-cover" /> : <Store size={18} />}</span><strong className="font-display">{business.name}</strong></div>{tagline && <p className="mt-2 text-xs text-emerald-50/65">{tagline}</p>}</div><div><h2 className="text-xs font-bold">Explore</h2><div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-emerald-50/70">{sections.map((section) => <a key={section.href} href={section.href} className="hover:text-white">{section.label}</a>)}</div></div><div><h2 className="text-xs font-bold">Contact</h2><div className="mt-3 grid gap-2 text-xs text-emerald-50/70">{business.phone && <a href={phoneLink}>{business.phone}</a>}{business.email && <a href={`mailto:${business.email}`}>{business.email}</a>}{location && <span>{location}</span>}</div></div><div><h2 className="text-xs font-bold">Share this page</h2><div className="mt-3 flex gap-2"><button type="button" onClick={() => void sharePage()} className="rounded-lg border border-white/20 px-3 py-2 text-xs font-bold hover:bg-white/10">{copied ? "Copied" : "Copy link"}</button>{whatsappLink && <a href={`https://wa.me/?text=${encodeURIComponent(`${business.name} — ${shareUrl}`)}`} target="_blank" rel="noreferrer" className="rounded-lg border border-white/20 px-3 py-2 text-xs font-bold hover:bg-white/10">WhatsApp</a>}</div></div></div><div className="border-t border-white/10"><div className="mx-auto flex max-w-[1500px] flex-col gap-2 px-4 py-4 text-[10px] text-white/55 sm:flex-row sm:justify-between sm:px-7 xl:px-10"><span>© {new Date().getFullYear()} {business.name}. All rights reserved.</span><Link to="/" className="font-semibold text-emerald-200 hover:text-white">Powered by e-businessRw</Link></div></div></footer>
+    <footer className="sf-footer">
+      <div className="sf-container sf-footer-grid">
+        <div className="sf-footer-brand">
+          <div className="sf-footer-logo">{business.logoUrl ? <img src={resolveAssetUrl(business.logoUrl)} alt="" /> : <Store size={20} />}</div>
+          <strong>{business.name}</strong>
+          {tagline && <p>{tagline}</p>}
+          {location && <p className="sf-footer-location"><MapPin size={13} />{location}</p>}
+        </div>
+        <div className="sf-footer-col"><h2>{t("Explore")}</h2>{sections.map((section) => <a key={section.href} href={section.href}>{t(section.label)}</a>)}</div>
+        <div className="sf-footer-col"><h2>{t("Contact")}</h2>{business.phone && <a href={phoneLink}>{business.phone}</a>}{business.email && <a href={`mailto:${business.email}`}>{business.email}</a>}{whatsappLink && <a href={whatsappLink} target="_blank" rel="noreferrer">{t("WhatsApp")}</a>}</div>
+        <div className="sf-footer-col"><h2>{t("Share this page")}</h2><div className="sf-footer-share"><button type="button" onClick={() => void sharePage()}>{copied ? t("Copied") : t("Copy link")}</button>{whatsappLink && <a href={`https://wa.me/?text=${encodeURIComponent(`${business.name} — ${shareUrl}`)}`} target="_blank" rel="noreferrer">WhatsApp</a>}</div><div className="sf-footer-lang"><LanguageSwitcher compact /></div></div>
+      </div>
+      <div className="sf-footer-bottom"><div className="sf-container"><span>© {new Date().getFullYear()} {business.name}. {t("All rights reserved.")}</span><Link to="/">{t("Powered by e-businessRw")}</Link></div></div>
+    </footer>
 
-    <div className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-2 gap-2 border-t border-[#dcebe8] bg-white/95 p-3 pb-[max(.75rem,env(safe-area-inset-bottom))] backdrop-blur-xl sm:hidden">{products.length > 0 ? <button type="button" onClick={() => setCartOpen(true)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[#087553] text-xs font-bold text-white"><ShoppingCart size={16} />Order{cartCount > 0 && ` (${cartCount})`}</button> : <Link to={requestUrl} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[#087553] text-xs font-bold text-white"><MessageCircle size={16} />Request</Link>}{whatsappLink ? <a href={whatsappLink} target="_blank" rel="noreferrer" onClick={() => track("WHATSAPP_CLICK")} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[#b8d9cd] bg-white text-xs font-bold text-[#087553]"><MessageCircle size={16} />WhatsApp</a> : phoneLink ? <a href={phoneLink} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-[#b8d9cd] bg-white text-xs font-bold text-[#087553]"><Phone size={16} />Call</a> : <a href="#contact" className="inline-flex min-h-11 items-center justify-center rounded-xl border border-[#b8d9cd] text-xs font-bold text-[#087553]">Contact</a>}</div>
+    <div className="sf-mobile-bar">
+      {products.length > 0
+        ? <button type="button" onClick={() => setCartOpen(true)} className="sf-mobile-primary"><ShoppingCart size={17} />{t("Order")}{cartCount > 0 && ` (${cartCount})`}</button>
+        : <Link to={requestUrl} className="sf-mobile-primary"><MessageCircle size={17} />{t("Request")}</Link>}
+      {whatsappLink
+        ? <a href={whatsappLink} target="_blank" rel="noreferrer" onClick={() => track("WHATSAPP_CLICK")} className="sf-mobile-secondary"><MessageCircle size={17} />WhatsApp</a>
+        : phoneLink
+          ? <a href={phoneLink} onClick={() => track("PHONE_CLICK")} className="sf-mobile-secondary"><Phone size={17} />{t("Call")}</a>
+          : <a href="#contact" className="sf-mobile-secondary"><MessageCircle size={17} />{t("Contact")}</a>}
+    </div>
 
-    {cartOpen && <div className="fixed inset-0 z-[60]" role="presentation"><button type="button" aria-label={t("Close order")} onClick={() => setCartOpen(false)} className="absolute inset-0 size-full bg-[#09251d]/50 backdrop-blur-[2px]" /><aside role="dialog" aria-modal="true" aria-label={t("Your order")} className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col bg-white shadow-2xl"><div className="flex items-center justify-between border-b border-[#e2ece9] px-5 py-4"><div><p className="font-display text-lg font-bold">{t("Your order")}</p><p className="text-xs text-[#7a8980]">{cartCount} {cartCount === 1 ? t("item") : t("items")}</p></div><button type="button" onClick={() => setCartOpen(false)} className="grid size-10 place-items-center rounded-xl border border-[#e4e8df]" aria-label={t("Close order")}><X size={19} /></button></div>{cartItems.length ? <><div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">{cartItems.map((item) => <article key={item.id} className="flex gap-3 rounded-xl border border-[#e2ece9] p-3">{item.imageUrl ? <img src={resolveAssetUrl(item.imageUrl)} alt="" className="size-[68px] shrink-0 rounded-lg object-cover" /> : <span className="grid size-[68px] shrink-0 place-items-center rounded-lg bg-[#eaf5f1] text-[#087553]"><ImageIcon size={20} /></span>}<div className="min-w-0 flex-1"><h3 className="truncate text-sm font-bold">{item.name}</h3><p className="mt-1 text-xs font-bold text-[#087553]">{currency(item.price, item.currency)}</p><div className="mt-2 flex items-center gap-2"><button type="button" onClick={() => changeCartQuantity(item.id, -1)} className="grid size-7 place-items-center rounded-md bg-[#eaf5f1] text-[#087553]" aria-label={`Remove one ${item.name}`}><Minus size={13} /></button><span className="text-xs font-bold">{item.quantity}</span><button type="button" onClick={() => changeCartQuantity(item.id, 1)} className="grid size-7 place-items-center rounded-md bg-[#eaf5f1] text-[#087553]" aria-label={`Add another ${item.name}`}><Plus size={13} /></button></div></div></article>)}</div><div className="border-t border-[#e2ece9] p-5"><div className="flex justify-between text-sm"><span>{t("Estimated total")}</span><strong>{currency(cartTotal, cartItems[0]?.currency)}</strong></div><p className="mt-2 text-xs leading-5 text-[#788b85]">{t("The business will confirm availability, the final price, and pickup or delivery after your order request.")}</p><button type="button" onClick={sendOrderRequest} className="mt-4 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#087553] text-sm font-bold text-white">{t("Continue to order")} <ArrowRight size={16} /></button></div></> : <div className="grid flex-1 content-center justify-items-center px-8 text-center"><span className="grid size-14 place-items-center rounded-full bg-[#edf6f2] text-[#087553]"><ShoppingCart size={22} /></span><h3 className="mt-4 font-display text-lg font-bold">{t("Your order is empty")}</h3><p className="mt-2 text-sm text-[#77867d]">{t("Browse the catalog to add an item.")}</p></div>}</aside></div>}
+    {cartOpen && <div className="sf-drawer-backdrop" role="presentation">
+      <button type="button" aria-label={t("Close order")} onClick={() => setCartOpen(false)} className="sf-drawer-scrim" />
+      <aside role="dialog" aria-modal="true" aria-label={t("Your order")} className="sf-drawer">
+        <div className="sf-drawer-head">
+          <div><p className="sf-eyebrow">{t("Your order")}</p><h2>{cartCount} {cartCount === 1 ? t("item") : t("items")}</h2></div>
+          <button type="button" ref={cartCloseRef} onClick={() => setCartOpen(false)} className="sf-icon-btn" aria-label={t("Close order")}><X size={18} /></button>
+        </div>
+        {cartItems.length ? <>
+          <div className="sf-drawer-body">{cartItems.map((item) => <article key={item.id} className="sf-cart-item">
+            <div className="sf-cart-media">{item.imageUrl ? <img src={resolveAssetUrl(item.imageUrl)} alt="" /> : <span><ImageIcon size={20} /></span>}</div>
+            <div className="sf-cart-info">
+              <h3>{item.name}</h3>
+              <p className="sf-price">{currency(item.price, item.currency)}</p>
+              <div className="sf-stepper">
+                <button type="button" onClick={() => changeCartQuantity(item.id, -1)} aria-label={`${t("Remove one")} ${item.name}`}><Minus size={13} /></button>
+                <span>{item.quantity}</span>
+                <button type="button" onClick={() => changeCartQuantity(item.id, 1)} aria-label={`${t("Add another")} ${item.name}`}><Plus size={13} /></button>
+              </div>
+            </div>
+          </article>)}</div>
+          <div className="sf-drawer-foot">
+            <div className="sf-total"><span>{t("Estimated total")}</span><strong>{currency(cartTotal, cartItems[0]?.currency)}</strong></div>
+            <p>{t("The business will confirm availability, the final price, and pickup or delivery after your order request.")}</p>
+            <button type="button" onClick={sendOrderRequest} className="sf-btn sf-btn-primary sf-btn-block">{t("Continue to order")}<ArrowRight size={16} /></button>
+          </div>
+        </> : <div className="sf-drawer-empty"><span className="sf-section-icon"><ShoppingCart size={22} /></span><h3>{t("Your order is empty")}</h3><p>{t("Browse the catalog to add an item.")}</p><button type="button" onClick={() => setCartOpen(false)} className="sf-btn sf-btn-outline">{t("Continue shopping")}</button></div>}
+      </aside>
+    </div>}
   </div>;
 }
-
-
-
-

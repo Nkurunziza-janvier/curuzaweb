@@ -30,9 +30,7 @@ const AdminBusinessesPage = lazy(() => import("../pages/AdminPages").then((modul
 const AdminActivityPage = lazy(() => import("../pages/AdminPages").then((module) => ({ default: module.AdminActivityPage })));
 const AdminPaymentsPage = lazy(() => import("../pages/SubscriptionPages").then((module) => ({ default: module.AdminPaymentsPage })));
 const BillingPage = lazy(() => import("../pages/SubscriptionPages").then((module) => ({ default: module.BillingPage })));
-const BookingsPage = lazy(() => import("../pages/BookingDashboardPages").then((module) => ({ default: module.BookingsPage })));
-const BookingDetailPage = lazy(() => import("../pages/BookingDashboardPages").then((module) => ({ default: module.BookingDetailPage })));
-const AvailabilityPage = lazy(() => import("../pages/AvailabilityPage"));
+const AssistantPage = lazy(() => import("../pages/DashboardAssistant"));
 
 function LoadingFallback() {
   const { t } = useLanguage();
@@ -81,9 +79,6 @@ export const router = createBrowserRouter([
       { index: true, element: <Page><DashboardHome /></Page> },
       { path: "requests", element: <Page><RequestsPage /></Page> },
       { path: "requests/:requestId", element: <Page><RequestDetailPage /></Page> },
-      { path: "bookings", element: <Page><BookingsPage /></Page> },
-      { path: "bookings/:bookingId", element: <Page><BookingDetailPage /></Page> },
-      { path: "availability", element: <Page><AvailabilityPage /></Page> },
       { path: "quotes", element: <Page><ResourcePage type="quotes" /></Page> },
       { path: "quotes/new", element: <Page><CreateQuotePage /></Page> },
       { path: "quotes/:quoteId", element: <Page><QuoteDetailPage /></Page> },
@@ -93,6 +88,7 @@ export const router = createBrowserRouter([
       { path: "offers", element: <Page><ResourcePage type="offers" /></Page> },
       { path: "business-page", element: <Page><ResourcePage type="business-page" /></Page> },
       { path: "analytics", element: <Page><AnalyticsPage /></Page> },
+      { path: "assistant", element: <Page><AssistantPage /></Page> },
       { path: "settings", element: <Page><ResourcePage type="settings" /></Page> },
     ],
   },
