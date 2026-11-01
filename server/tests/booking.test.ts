@@ -28,6 +28,7 @@ describe("service booking flow", () => {
       password: "secure-test-password",
       businessName: `Booking Studio ${suffix.slice(0, 6)}`,
       category: "Beauty",
+      phone: "+250788000006",
     });
     expect(owner.status).toBe(201);
     const data = (owner.body as ApiBody<{ token: string; user: { business: { id: string; slug: string } } }>).data;
@@ -120,7 +121,8 @@ describe("service booking flow", () => {
     const statuses = responses.map((response) => response.status).sort();
     expect(statuses).toEqual([201, 409]);
     const created = responses.find((response) => response.status === 201);
-    const data = (created!.body as ApiBody<{ publicToken: string; status: string; service: { durationMinutes: number } }>).data;
+    const data = (created!.body as ApiBody<{ publicToken: string; bookingNumber: string; status: string; service: { durationMinutes: number } }>).data;
+    expect(data.bookingNumber).toMatch(/^EB-[A-Z0-9]{6}$/);
     expect(data.status).toBe("PENDING");
     expect(data.service.durationMinutes).toBe(60);
     bookingToken = data.publicToken;

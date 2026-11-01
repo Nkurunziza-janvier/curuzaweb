@@ -1,6 +1,7 @@
 import "dotenv/config";
 import bcrypt from "bcryptjs";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { findIndustryForCategory } from "../src/config/businessCatalog.js";
 
 const prisma = new PrismaClient();
 const passwordHash = await bcrypt.hash("UbucuruziDemo2026!", 12);
@@ -41,11 +42,19 @@ async function main() {
 
   const seeded: Array<{ id: string; slug: string; name: string }> = [];
   for (const [index, item] of sampleBusinesses.entries()) {
+    const industry = findIndustryForCategory(item.category);
+    const subtype = industry.subtypes.find((candidate) => candidate.label.toLowerCase() === item.category.toLowerCase()) ?? industry.subtypes[0]!;
     const business = await prisma.business.upsert({
       where: { slug: item.slug },
       update: {
         name: item.name,
         category: item.category,
+        industryKey: industry.key,
+        subtype: subtype.key,
+        capabilities: industry.recommended,
+        profileData: {},
+        preferredLanguage: "en",
+        currency: "RWF",
         description: item.description,
         phone: item.phone,
         whatsapp: item.phone,
@@ -56,6 +65,9 @@ async function main() {
         isPublished: true,
         canPublishProducts: true,
         productAccessExpiresAt: new Date(Date.now() + 365 * 86400000),
+        onboardingStep: 6,
+        onboardingCompletedAt: new Date(),
+        publishedAt: new Date(),
         coverImageUrl: "https://images.unsplash.com/photo-1665333048952-a3ee97714c6b?auto=format&fit=crop&w=1200&q=85",
       },
       create: {
@@ -63,6 +75,12 @@ async function main() {
         name: item.name,
         slug: item.slug,
         category: item.category,
+        industryKey: industry.key,
+        subtype: subtype.key,
+        capabilities: industry.recommended,
+        profileData: {},
+        preferredLanguage: "en",
+        currency: "RWF",
         description: item.description,
         phone: item.phone,
         whatsapp: item.phone,
@@ -73,6 +91,9 @@ async function main() {
         isPublished: true,
         canPublishProducts: true,
         productAccessExpiresAt: new Date(Date.now() + 365 * 86400000),
+        onboardingStep: 6,
+        onboardingCompletedAt: new Date(),
+        publishedAt: new Date(),
         coverImageUrl: "https://images.unsplash.com/photo-1665333048952-a3ee97714c6b?auto=format&fit=crop&w=1200&q=85",
       },
     });

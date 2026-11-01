@@ -1,6 +1,7 @@
 import { Prisma, RequestStatus } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { prisma } from "../config/prisma.js";
+import { availableCapabilityKeys } from "../config/businessCatalog.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { badRequest, notFound, unauthorized } from "../utils/errors.js";
 import { success } from "../utils/responses.js";
@@ -12,15 +13,22 @@ export const createPublicRequest = asyncHandler(async (request, response) => {
   if (!input.customerEmail && !input.customerPhone && !input.customerWhatsapp) throw badRequest("Provide an email address or phone number so the business can respond");
   const business = await prisma.business.findUnique({
     where: { slug: getParam(request, "slug") },
-    select: { id: true, isPublished: true, isBlocked: true },
+    select: { id: true, isPublished: true, isBlocked: true, capabilities: true },
   });
   if (!business?.isPublished || business.isBlocked) throw notFound("Business page not found");
+  const capabilities = new Set<string>(business.capabilities.length ? business.capabilities : availableCapabilityKeys);
+  const orderItems = input.orderItems ?? [];
+  const isProductOrder = orderItems.length > 0;
+  if (isProductOrder && (!capabilities.has("product_orders") || !capabilities.has("products"))) {
+    throw badRequest("This business is not accepting product orders right now.");
+  }
+  if (!isProductOrder && !capabilities.has("service_requests") && !capabilities.has("contact_form")) {
+    throw badRequest("This business is not accepting requests right now.");
+  }
   const template = await prisma.requestTemplate.findFirst({
     where: { businessId: business.id, isActive: true },
     include: { questions: { orderBy: { sortOrder: "asc" } } },
   });
-  const orderItems = input.orderItems ?? [];
-  const isProductOrder = orderItems.length > 0;
   if (!template && !isProductOrder) throw badRequest("This business has not configured a request form");
 
   let orderDescription = "";

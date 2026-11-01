@@ -1,4 +1,4 @@
-import { BarChart3, ChevronRight, CreditCard, Eye, FileText, Gift, LayoutDashboard, LogOut, Menu, Package, PanelTop, Settings, ShoppingBag, Sparkles, X } from "lucide-react";
+import { ChevronRight, Eye, LogOut, Menu, Sparkles, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
@@ -7,64 +7,7 @@ import { useCurrentUser } from "../hooks/apiHooks";
 import { authService } from "../services/authService";
 import { NotificationBell } from "../components/NotificationBell";
 import { LanguageSwitcher, useLanguage } from "../i18n";
-
-const groups = [
-  {
-    label: "Overview",
-    links: [
-      ["/dashboard", "Overview", LayoutDashboard],
-      ["/dashboard/analytics", "Analytics", BarChart3],
-    ],
-  },
-  {
-    label: "Customers",
-    links: [
-      ["/dashboard/requests", "Requests", FileText],
-      ["/dashboard/quotes", "Quotes", Sparkles],
-    ],
-  },
-  {
-    label: "Catalog",
-    links: [
-      ["/dashboard/products", "Products", Package],
-      ["/dashboard/services", "Services", ShoppingBag],
-      ["/dashboard/offers", "Offers", Gift],
-    ],
-  },
-  {
-    label: "Business",
-    links: [
-      ["/dashboard/business-page", "Business page", PanelTop],
-      ["/dashboard/billing", "Plans & billing", CreditCard],
-      ["/dashboard/settings", "Settings", Settings],
-    ],
-  },
-  {
-    label: "Support",
-    links: [["/dashboard/assistant", "AI Assistant", Sparkles, "New"]],
-  },
-] as const;
-
-const pageTitles: Record<string, string> = {
-  "/dashboard": "Overview",
-  "/dashboard/requests": "Requests",
-  "/dashboard/quotes": "Quotes",
-  "/dashboard/products": "Products",
-  "/dashboard/services": "Services",
-  "/dashboard/offers": "Offers",
-  "/dashboard/business-page": "Business page",
-  "/dashboard/billing": "Plans & billing",
-  "/dashboard/settings": "Settings",
-  "/dashboard/analytics": "Analytics",
-  "/dashboard/assistant": "AI Assistant",
-};
-
-function currentPageTitle(pathname: string) {
-  const match = Object.keys(pageTitles)
-    .filter((path) => pathname === path || pathname.startsWith(`${path}/`))
-    .sort((a, b) => b.length - a.length)[0];
-  return pageTitles[match ?? "/dashboard"] ?? "Overview";
-}
+import { moduleForPath, moduleLabel, visibleDashboardGroups } from "../lib/dashboardModules";
 
 export default function DashboardLayout() {
   const [open, setOpen] = useState(false);
@@ -75,6 +18,9 @@ export default function DashboardLayout() {
   const { t } = useLanguage();
   const business = user?.business;
   const businessSlug = business?.slug ?? "";
+  const visibleGroups = visibleDashboardGroups(business?.capabilities);
+  const activeModule = moduleForPath(location.pathname);
+  const pageTitle = activeModule ? moduleLabel(activeModule, business) : "Overview";
   const initials = (user?.name ?? "Business")
     .split(" ")
     .filter(Boolean)
@@ -134,16 +80,19 @@ export default function DashboardLayout() {
       </div>
 
       <nav className="dash-nav" aria-label={t("Dashboard")}>
-        {groups.map((group) => (
-          <div key={group.label} className="dash-nav-group">
+        {visibleGroups.map((group) => (
+          <div key={group.group} className="dash-nav-group">
             <p className="dash-nav-label">{t(group.label)}</p>
-            {group.links.map(([to, label, Icon, badge]) => (
-              <NavLink key={to} end={to === "/dashboard"} to={to} className={({ isActive }) => `dash-nav-link ${isActive ? "is-active" : ""}`}>
-                <Icon size={17} strokeWidth={2} />
-                <span className="dash-nav-text">{t(label)}</span>
-                {badge && <span className="dash-nav-new">{t(badge)}</span>}
-              </NavLink>
-            ))}
+            {group.modules.map((module) => {
+              const Icon = module.icon;
+              return (
+                <NavLink key={module.key} end={module.path === "/dashboard"} to={module.path} className={({ isActive }) => `dash-nav-link ${isActive ? "is-active" : ""}`}>
+                  <Icon size={17} strokeWidth={2} />
+                  <span className="dash-nav-text">{t(moduleLabel(module, business))}</span>
+                  {module.key === "assistant" && <span className="dash-nav-new">{t("New")}</span>}
+                </NavLink>
+              );
+            })}
           </div>
         ))}
       </nav>
@@ -191,7 +140,7 @@ export default function DashboardLayout() {
           <Button variant="ghost" className="dash-menu-button !px-2" aria-label={t("Open navigation")} onClick={() => setOpen(true)} icon={<Menu size={19} />} />
           <div className="min-w-0">
             <p className="dash-topbar-eyebrow">{business?.name ?? t("Business workspace")}</p>
-            <p className="dash-topbar-title">{t(currentPageTitle(location.pathname))}</p>
+            <p className="dash-topbar-title">{t(pageTitle)}</p>
           </div>
           <div className="ml-auto flex min-w-0 items-center gap-1.5 sm:gap-2">
             <div className="dash-topbar-lang"><LanguageSwitcher compact /></div>

@@ -36,6 +36,7 @@ describe("business → request → quote → acceptance flow", () => {
       password: "secure-test-password",
       businessName: `Flow Repair ${suffix.slice(0, 6)}`,
       category: "Mechanic",
+      phone: "+250788000003",
     });
     expect(owner.status).toBe(201);
     ownerToken = (owner.body as ApiBody<{ token: string; user: { business: { id: string; slug: string } } }>).data.token;
@@ -48,11 +49,34 @@ describe("business → request → quote → acceptance flow", () => {
       email: otherEmail,
       password: "secure-test-password",
       businessName: `Other Business ${suffix.slice(0, 6)}`,
+      whatsapp: "+250788000004",
     });
     expect(other.status).toBe(201);
     const otherData = (other.body as ApiBody<{ token: string; user: { business: { id: string } } }>).data;
     otherToken = otherData.token;
     otherBusinessId = otherData.user.business.id;
+
+    await prisma.business.update({
+      where: { id: businessId },
+      data: { isPublished: true, canPublishProducts: true, productAccessExpiresAt: new Date(Date.now() + 30 * 86400000) },
+    });
+
+    const template = await request(app)
+      .put(`/api/businesses/${businessId}/request-template`)
+      .set("Authorization", `Bearer ${ownerToken}`)
+      .send({
+        name: "Repair request",
+        businessType: "Mechanic",
+        questions: [
+          { label: "Request type", type: "SELECT", required: true, options: ["Repair", "Inspection"], sortOrder: 0 },
+          { label: "Location", type: "LOCATION", required: true, sortOrder: 1 },
+          { label: "Preferred date", type: "DATE", required: false, sortOrder: 2 },
+          { label: "Vehicle type", type: "TEXT", required: true, sortOrder: 3 },
+          { label: "Vehicle model", type: "TEXT", required: true, sortOrder: 4 },
+          { label: "Issue", type: "TEXTAREA", required: true, sortOrder: 5 },
+        ],
+      });
+    expect(template.status).toBe(201);
   });
 
   afterAll(async () => {

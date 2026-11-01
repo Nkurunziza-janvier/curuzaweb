@@ -59,13 +59,25 @@ export const api = {
 };
 
 export const businessService = {
+  getCatalog: <T>() => api.get<T>("/public/business-catalog"),
   getPublicBusinessBrand: <T>(slug: string) => api.get<T>(`/public/businesses/${encoded(slug)}/brand`),
   getPublicBusiness: <T>(slug: string) => api.get<T>(`/public/businesses/${encoded(slug)}`),
   getPublicBusinesses: <T>() => api.get<T[]>("/public/businesses"),
   getBusinesses: <T>() => api.get<T[]>("/businesses"),
   get: <T>(businessId: string) => api.get<T>(`/businesses/${encoded(businessId)}`),
+  getProfileCompletion: <T>(businessId: string) => api.get<T>(`/businesses/${encoded(businessId)}/profile-completion`),
   update: <T>(businessId: string, payload: unknown) => api.patch<T>(`/businesses/${encoded(businessId)}`, payload),
   publish: <T>(businessId: string, published: boolean) => api.post<T>(`/businesses/${encoded(businessId)}/${published ? "publish" : "unpublish"}`),
+};
+
+export const dashboardService = {
+  getSummary: <T>(businessId: string) => api.get<T>(`/businesses/${encoded(businessId)}/workspace-summary`),
+};
+
+export const customerService = {
+  list: <T>(businessId: string, search?: string) => api.get<T>(`/businesses/${encoded(businessId)}/customers${search ? `?search=${encoded(search)}` : ""}`),
+  listReviews: <T>(businessId: string) => api.get<T>(`/businesses/${encoded(businessId)}/reviews`),
+  setReviewPublished: <T>(reviewId: string, isPublished: boolean) => api.patch<T>(`/reviews/${encoded(reviewId)}`, { isPublished }),
 };
 
 export const requestService = {
@@ -136,6 +148,20 @@ export const bookingService = {
   updateStatus: <T>(id: string, status: string) => api.patch<T>(`/bookings/${encoded(id)}/status`, { status }),
   reschedule: <T>(id: string, startAt: string) => api.patch<T>(`/bookings/${encoded(id)}/schedule`, { startAt }),
   updateNote: <T>(id: string, ownerNote: string) => api.patch<T>(`/bookings/${encoded(id)}/note`, { ownerNote }),
+};
+
+export const orderService = {
+  create: <T>(slug: string, payload: unknown) => api.post<T>(`/public/businesses/${encoded(slug)}/orders`, payload),
+  getPublic: <T>(publicToken: string) => api.get<T>(`/public/orders/${encoded(publicToken)}`),
+  cancelPublic: <T>(publicToken: string) => api.post<T>(`/public/orders/${encoded(publicToken)}/cancel`),
+  initiatePayment: <T>(publicToken: string, payload: { provider: "MOBILE_MONEY" | "CARD"; payerPhone?: string }) => api.post<T>(`/public/orders/${encoded(publicToken)}/payments`, payload),
+  confirmPayment: <T>(reference: string) => api.post<T>(`/public/payments/${encoded(reference)}/confirm`),
+  listByBusiness: <T>(businessId: string) => api.get<T[]>(`/businesses/${encoded(businessId)}/orders`),
+  summary: <T>(businessId: string) => api.get<T>(`/businesses/${encoded(businessId)}/orders/summary`),
+  get: <T>(id: string) => api.get<T>(`/orders/${encoded(id)}`),
+  updateStatus: <T>(id: string, status: string) => api.patch<T>(`/orders/${encoded(id)}/status`, { status }),
+  markPaid: <T>(id: string) => api.post<T>(`/orders/${encoded(id)}/mark-paid`),
+  reviewPayment: <T>(orderId: string, paymentId: string, payload: { status: string; note?: string }) => api.patch<T>(`/orders/${encoded(orderId)}/payments/${encoded(paymentId)}`, payload),
 };
 
 export const analyticsService = {

@@ -1,357 +1,834 @@
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
-  ArrowRight,
-  BadgeCheck,
-  BarChart3,
-  Check,
-  CircleCheck,
-  ClipboardList,
-  FileCheck2,
-  Hammer,
-  Heart,
-  Link2,
-  MapPin,
-  MessageCircle,
-  Package,
-  Phone,
-  Search,
-  Send,
-  ShieldCheck,
-  Sparkles,
-  Store,
-  Utensils,
-  Users,
-  Wrench,
-  type LucideIcon,
+  ArrowRight, ArrowUpRight, BadgeCheck, BedDouble, Check, Clock3, Coffee, Copy, Globe2, Hammer,
+  MapPin, MessageCircle, Plus, Scissors, Share2, ShieldCheck, Smartphone, Sparkles, Star, Store,
+  Wallet, type LucideIcon,
 } from "lucide-react";
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent, type ReactNode } from "react";
 import { Link } from "react-router";
-import { useQuery } from "@tanstack/react-query";
-import { Brand, Button, ButtonLink } from "../components/ui";
-import { businessService, resolveAssetUrl } from "../services/api";
+import { Brand } from "../components/ui";
 import { useLanguage } from "../i18n";
+import { usePublicBusinessList } from "../hooks/apiHooks";
 
-interface FeaturedBusiness {
-  id: string;
-  name: string;
-  slug: string;
-  category: string;
-  description: string;
-  logoUrl: string | null;
-  coverImageUrl: string | null;
-  phone: string | null;
-  whatsapp: string | null;
-  city: string | null;
-  products: Array<{ id: string; name: string; description: string; price: number | string; currency: string; imageUrl: string | null }>;
-  services: Array<{ id: string; name: string; description: string; startingPrice: number | string; currency: string; duration: string | null; imageUrl: string | null }>;
+/* ================================================================== helpers */
+
+const HOME_URL = "https://ebusinessrw.rw";
+
+function useSectionReveal() {
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return undefined;
+    const targets = Array.from(root.querySelectorAll<HTMLElement>("[data-reveal]"));
+    if (!("IntersectionObserver" in window)) {
+      targets.forEach((element) => element.classList.add("is-in"));
+      return undefined;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("is-in");
+            observer.unobserve(entry.target);
+          }
+        }
+      },
+      { threshold: 0.14, rootMargin: "0px 0px -48px 0px" },
+    );
+    targets.forEach((element) => observer.observe(element));
+    return () => observer.disconnect();
+  }, []);
+  return rootRef;
 }
 
-const categoryCards = [
-  { name: "Food & drink", sub: "Menus, specials and catering", photo: "https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=900&q=85", icon: Utensils },
-  { name: "Fashion", sub: "Clothing, accessories and more", photo: "https://images.unsplash.com/photo-1483985988355-763728e1935b?auto=format&fit=crop&w=900&q=85", icon: Sparkles },
-  { name: "Electronics", sub: "Showcase what you sell", photo: "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=900&q=85", icon: Package },
-  { name: "Home & living", sub: "Furniture, decor and services", photo: "https://images.unsplash.com/photo-1600210492486-724fe5c67fb0?auto=format&fit=crop&w=900&q=85", icon: Hammer },
-  { name: "Beauty & care", sub: "Services, styles and products", photo: "https://images.unsplash.com/photo-1608248543803-ba4f8c70ae0b?auto=format&fit=crop&w=900&q=85", icon: Heart },
+function delayStyle(delay = 0) {
+  return { "--qr-d": `${delay}ms` } as CSSProperties;
+}
+
+type LiveExampleBusiness = { slug: string; name?: string; coverImageUrl?: string | null };
+
+/* ================================================================== copy-link */
+
+function CopyLinkButton({ path }: { path: string }) {
+  const { t } = useLanguage();
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    const url = `${HOME_URL}${path}`;
+    try {
+      if ("clipboard" in navigator && typeof navigator.clipboard?.writeText === "function") {
+        await navigator.clipboard.writeText(url);
+      } else {
+        const area = document.createElement("textarea");
+        area.value = url;
+        document.body.appendChild(area);
+        area.select();
+        document.execCommand("copy");
+        document.body.removeChild(area);
+      }
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1900);
+    } catch {
+      setCopied(false);
+    }
+  };
+  return (
+    <button type="button" className={`qr-copy-btn${copied ? " is-copied" : ""}`} onClick={copy} aria-live="polite">
+      {copied ? <><Check size={13} aria-hidden="true" /> {t("Copied")}</> : <><Copy size={13} aria-hidden="true" /> {t("Copy")}</>}
+    </button>
+  );
+}
+
+/* ================================================================== faq */
+
+function FaqItem({ q, a, index, open: initial }: { q: string; a: string; index: number; open: boolean }) {
+  const [open, setOpen] = useState(initial);
+  const panelId = `qr-faq-panel-${index}`;
+  return (
+    <div className={`qr-faq-item${open ? " is-open" : ""}`}>
+      <button type="button" className="qr-faq-q" aria-expanded={open} aria-controls={panelId} onClick={() => setOpen((value) => !value)}>
+        <span>{q}</span>
+        <span className="qr-faq-icon" aria-hidden="true"><Plus size={14} /></span>
+      </button>
+      <div className="qr-faq-a" id={panelId} aria-hidden={!open}>
+        <div><p>{a}</p></div>
+      </div>
+    </div>
+  );
+}
+
+/* ================================================================== showcase */
+
+type Space = {
+  id: string;
+  icon: LucideIcon;
+  label: string;
+  name: string;
+  place: string;
+  accent: string;
+  soft: string;
+  badge: string;
+  stat: string;
+  tabs: string[];
+  items: Array<{ name: string; meta: string; price: string }>;
+  actions: [string, string];
+  modules: string[];
+};
+
+const spaces: Space[] = [
+  {
+    id: "cafe",
+    icon: Coffee,
+    label: "Cafés & restaurants",
+    name: "Green Beans Coffee",
+    place: "Kigali · Café",
+    accent: "#c2410c",
+    soft: "#ffe3d3",
+    badge: "Open today",
+    stat: "Menu updated 2m ago",
+    tabs: ["Menu", "Our story", "Visit"],
+    items: [
+      { name: "Espresso brew", meta: "Single origin", price: "2,800" },
+      { name: "Bushera bowl", meta: "Warm & sweet", price: "4,000" },
+      { name: "Banana bread", meta: "Baked at 6am", price: "5,200" },
+    ],
+    actions: ["Order now", "Book a table"],
+    modules: ["Products", "Bookings", "Requests", "Payments"],
+  },
+  {
+    id: "salon",
+    icon: Scissors,
+    label: "Salons & barbers",
+    name: "Kigali Hair Studio",
+    place: "Remera · Hair & beauty",
+    accent: "#8a4b6b",
+    soft: "#f6e3ec",
+    badge: "3 slots left",
+    stat: "Bookings +18 this week",
+    tabs: ["Services", "Gallery", "Book"],
+    items: [
+      { name: "Braids & twists", meta: "2–3 hours", price: "15,000" },
+      { name: "Wash & style", meta: "45 minutes", price: "8,000" },
+      { name: "Beard trim", meta: "20 minutes", price: "3,000" },
+    ],
+    actions: ["Book a service", "Send a message"],
+    modules: ["Services", "Bookings", "Reviews", "Requests"],
+  },
+  {
+    id: "hardware",
+    icon: Hammer,
+    label: "Hardware stores",
+    name: "Kigali Hardware",
+    place: "Nyabugogo · Building supplies",
+    accent: "#a1601f",
+    soft: "#f7e7d4",
+    badge: "Delivery today",
+    stat: "Quotes accepted 12",
+    tabs: ["Catalogue", "Delivery", "Visit"],
+    items: [
+      { name: "Cement 50kg", meta: "CIMERWA", price: "12,000" },
+      { name: "Paint 5L", meta: "Interior matte", price: "18,500" },
+      { name: "Hinges (pair)", meta: "Stainless", price: "1,200" },
+    ],
+    actions: ["Order now", "Request a quote"],
+    modules: ["Products", "Orders", "Quotes", "Payments"],
+  },
+  {
+    id: "guesthouse",
+    icon: BedDouble,
+    label: "Guest houses",
+    name: "Lakeview Guest House",
+    place: "Rubavu · Lakeside stay",
+    accent: "#356a8a",
+    soft: "#e1eef6",
+    badge: "Rooms available",
+    stat: "Requests answered 9",
+    tabs: ["Rooms", "The house", "Explore"],
+    items: [
+      { name: "Double room", meta: "Lake view", price: "45,000" },
+      { name: "Breakfast", meta: "Served 7–10am", price: "5,000" },
+      { name: "Airport pickup", meta: "One way", price: "10,000" },
+    ],
+    actions: ["Book a room", "Send a message"],
+    modules: ["Rooms", "Bookings", "Requests", "Location"],
+  },
 ];
 
-export default function LandingPage() {
-  const { t } = useLanguage();
-  const handleHeroPointerMove = (event: PointerEvent<HTMLDivElement>) => {
-    if (event.pointerType !== "mouse") return;
-    const bounds = event.currentTarget.getBoundingClientRect();
-    const x = (event.clientX - bounds.left) / bounds.width - 0.5;
-    const y = (event.clientY - bounds.top) / bounds.height - 0.5;
-    event.currentTarget.style.setProperty("--hero-tilt-x", `${x * 2.4}deg`);
-    event.currentTarget.style.setProperty("--hero-tilt-y", `${y * -1.8}deg`);
-  };
-  const resetHeroPointer = (event: PointerEvent<HTMLDivElement>) => {
-    event.currentTarget.style.setProperty("--hero-tilt-x", "0deg");
-    event.currentTarget.style.setProperty("--hero-tilt-y", "0deg");
-  };
-  const businesses = useQuery<ListedBusiness[]>({ queryKey: ["public-businesses"], queryFn: businessService.getPublicBusinesses<ListedBusiness> });
-  const demoSlug = businesses.data?.[0]?.slug;
-  const featured = useQuery<FeaturedBusiness>({ queryKey: ["public-business", demoSlug ?? ""], queryFn: () => businessService.getPublicBusiness<FeaturedBusiness>(demoSlug!), enabled: Boolean(demoSlug) });
-  const business = featured.data;
-  const features: Array<{ icon: LucideIcon; title: string; description: string; tone: string }> = [
-    { icon: Store, title: "Create your page", description: "Register your business in minutes and set up your page.", tone: "mint" },
-    { icon: Package, title: "Add your products", description: "Upload photos, set prices and write descriptions.", tone: "orange" },
-    { icon: ClipboardList, title: "Receive requests", description: "Let customers ask about products or request a quote.", tone: "violet" },
-    { icon: BarChart3, title: "Manage your business", description: "Track page visits and customer enquiries.", tone: "blue" },
-    { icon: ShieldCheck, title: "Build customer trust", description: "Show your details, location and what you offer.", tone: "pink" },
-  ];
-  const steps = [
-    { icon: Users, title: "Register", copy: "Create your business account in minutes." },
-    { icon: Package, title: "Add products", copy: "Upload photos, set prices and write descriptions." },
-    { icon: Store, title: "Go live", copy: "Your page is ready to share with customers." },
-    { icon: BarChart3, title: "Receive requests", copy: "Manage enquiries and grow your sales." },
-  ];
-  const previewItems = business?.products.slice(0, 2) ?? [
-    { id: "sample-product-1", name: "Restaurant favourite", price: 18500, currency: "RWF", imageUrl: null, description: "Freshly prepared" },
-    { id: "sample-product-2", name: "A customer favourite", price: 24000, currency: "RWF", imageUrl: null, description: "Made with care" },
-  ];
-  const bannerImage = resolveAssetUrl(business?.coverImageUrl ?? null) ?? "https://images.unsplash.com/photo-1441986300917-64674bd600d8?auto=format&fit=crop&w=1100&q=85";
+const tickerItems = ["Cafés & restaurants", "Salons & barbers", "Hardware stores", "Tailors & boutiques", "Guest houses", "Mechanics", "Bakeries", "Phone repair", "Photographers", "Coffee shops", "Pharmacies", "Print shops"];
 
-  return <div className="ebiz-landing ref-landing">
-    <section className="ref-hero">
-      <div className="landing-shell ref-hero-grid">
-        <div className="ref-hero-copy landing-hero-copy">
-          <span className="ref-eyebrow">{t("SELL")} <i /> {t("CONNECT")} <i /> {t("GROW")}</span>
-          <h1><span>{t("Turn your business")}</span><span>{t("into an")} <em>{t("online store.")}</em></span></h1>
-          <p>{t("e-businessRw helps local businesses register, showcase their products and services, and reach more customers — all in one place.")}</p>
-          <div className="ref-hero-actions"><Link to="/register" className="ref-button">{t("Get started free")} <ArrowRight size={15} /></Link><a href="#how-it-works" className="ref-button ref-button-outline"><span className="ref-play">▶</span> {t("How it works")}</a></div>
-          <div className="ref-hero-perks"><span><ShieldCheck /> {t("No website needed")}</span><span><Sparkles /> {t("Easy to use")}</span><span><ShieldCheck /> {t("Secure account")}</span></div>
-        </div>
-        <div className="ref-hero-devices" aria-label="Preview of an e-businessRw storefront on a laptop and mobile phone" onPointerMove={handleHeroPointerMove} onPointerLeave={resetHeroPointer}>
-          <div className="ref-room-photo" />
-          <div className="ref-laptop"><div className="ref-laptop-screen"><div className="ref-browser-bar"><i /><i /><i /><span>e-businessRw / {business?.slug ?? "your-business"}</span></div><div className="ref-store-nav"><Brand /><span>Products&nbsp;&nbsp;&nbsp; Services&nbsp;&nbsp;&nbsp; Offers</span><Search size={14} /></div><div className="ref-store-banner" style={{ backgroundImage: `linear-gradient(90deg,rgba(7,30,23,.78),rgba(7,30,23,.06)),url("${bannerImage}")` }}><div><b>{business?.name ?? "Local products. Better tomorrow."}</b><small>Showcase what you offer and help customers find you.</small><span>Explore the page <ArrowRight size={11} /></span></div><span className="ref-store-avatar" /></div><div className="ref-store-cats"><span>🛍️<small>Food & Drink</small></span><span>🧥<small>Fashion</small></span><span>◉<small>Electronics</small></span><span>⌂<small>Home & Living</small></span><span>✿<small>Beauty</small></span></div><div className="ref-product-row">{previewItems.map((item, index) => <div className="ref-mini-product" key={item.id}><div style={{ backgroundImage: `url("${resolveAssetUrl(item.imageUrl) ?? categoryCards[index]?.photo ?? categoryCards[0]!.photo}")` }} /><b>{item.name}</b><small>{item.currency} {Number(item.price).toLocaleString()}</small></div>)}</div></div><div className="ref-laptop-base" /></div>
-          <div className="ref-phone"><div className="ref-phone-speaker" /><div className="ref-phone-screen"><div className="ref-phone-top"><span>e-businessRw</span><Search size={11} /></div><div className="ref-phone-banner" style={{ backgroundImage: `linear-gradient(0deg,rgba(7,30,23,.76),transparent 90%),url("${bannerImage}")` }}><b>{business?.name ?? "Support local businesses"}</b></div><div className="ref-phone-icons"><span>🛍️</span><span>🧥</span><span>◉</span><span>⌂</span></div><div className="ref-phone-products">{previewItems.map((item, index) => <div key={item.id}><img src={resolveAssetUrl(item.imageUrl) ?? categoryCards[index]?.photo ?? categoryCards[0]!.photo} alt="" /><b>{item.name}</b><small>{item.currency} {Number(item.price).toLocaleString()}</small></div>)}</div><span className="ref-phone-home" /></div></div>
-          <div className="ref-plant" aria-hidden="true"><i /><i /><i /><i /><i /><i /><span /></div>
+const faqs: Array<[string, string]> = [
+  ["Do I need a website or an app?", "No. Your page lives on e-businessRw and opens in any browser — customers reach it from a link you share."],
+  ["How do customers reach me?", "They open your page and send a request, booking or order. It lands with full details in your workspace."],
+  ["What does it cost to start?", "Creating your page and receiving requests is free. You pay only when you publish products and services — RWF 10,000 monthly or RWF 100,000 yearly."],
+  ["Can I change my content later?", "Yes. Prices, services and settings stay editable from your workspace, in seconds, whenever something changes."],
+  ["What if customers message me on WhatsApp already?", "Keep using it. Your page gives those conversations a permanent home: menu, prices, catalogue and a place to be found."],
+  ["Is it built for Rwandan businesses?", "Yes — Mobile Money, RWF pricing and Kinyarwanda support are part of the product, not an afterthought."],
+];
+
+function Showcase({ liveExamplePath }: { liveExamplePath?: string }) {
+  const { t } = useLanguage();
+  const [active, setActive] = useState(0);
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const space = spaces[active];
+
+  const onTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, index: number) => {
+    const last = spaces.length - 1;
+    let next: number | null = null;
+    if (event.key === "ArrowDown" || event.key === "ArrowRight") next = index === last ? 0 : index + 1;
+    else if (event.key === "ArrowUp" || event.key === "ArrowLeft") next = index === 0 ? last : index - 1;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = last;
+    if (next === null) return;
+    event.preventDefault();
+    setActive(next);
+    tabRefs.current[next]?.focus();
+  };
+
+  return (
+    <section id="industries" className="qr-section" aria-labelledby="qr-showcase-title">
+      <div className="qr-shell">
+        <div className="qr-showcase">
+          <div className="qr-showcase-head" data-reveal="">
+            <div>
+              <span className="qr-eyebrow qr-eyebrow--light">{t("For every local business")}</span>
+              <h2 id="qr-showcase-title" className="qr-h2">
+                {t("Built for businesses")} <span className="qr-serif">{t("like yours.")}</span>
+              </h2>
+              <p className="qr-lede">
+                {t("Pick a type. The same page reshapes itself around what you sell, how customers book, and what they need to know.")}
+              </p>
+            </div>
+            {liveExamplePath && (
+              <Link to={liveExamplePath} className="qr-arrow-link">
+                {t("See a real page")} <ArrowUpRight size={15} aria-hidden="true" />
+              </Link>
+            )}
+          </div>
+
+          <div className="qr-tabs" role="tablist" aria-label={t("Business types")} data-reveal="">
+            {spaces.map((item, index) => {
+              const Icon = item.icon;
+              return (
+                <button
+                  key={item.id}
+                  ref={(element) => { tabRefs.current[index] = element; }}
+                  id={`qr-show-tab-${item.id}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={active === index}
+                  aria-controls="qr-show-panel"
+                  tabIndex={active === index ? 0 : -1}
+                  className={`qr-tab${active === index ? " is-active" : ""}`}
+                  onClick={() => setActive(index)}
+                  onKeyDown={(event) => onTabKeyDown(event, index)}
+                >
+                  <Icon size={15} aria-hidden="true" /> {t(item.label)}
+                </button>
+              );
+            })}
+          </div>
+
+          <div
+            id="qr-show-panel"
+            role="tabpanel"
+            aria-labelledby={`qr-show-tab-${space.id}`}
+            tabIndex={0}
+            className="qr-showcase-panel"
+            style={{ "--qr-show-accent": space.accent, "--qr-show-soft": space.soft } as CSSProperties}
+          >
+            <div className="qr-showcase-cover">
+              <span className="qr-live-chip"><i /> {space.badge}</span>
+              <span className="qr-showcase-badge">{t(space.label)}</span>
+              <div className="qr-showcase-cover-copy">
+                <span>{t("Local business")}</span>
+                <b>{space.name}</b>
+                <small><MapPin size={11} aria-hidden="true" /> {space.place}</small>
+              </div>
+            </div>
+
+            <div className="qr-showcase-body qr-showcase-swap" key={space.id}>
+              <div className="qr-showcase-body-head">
+                <b>{t("On the page")}</b>
+                <span>{space.stat}</span>
+              </div>
+              <div className="qr-show-tabs">
+                {space.tabs.map((tab, index) => <span key={tab} className={index === 0 ? "is-on" : ""}>{tab}</span>)}
+              </div>
+              <div className="qr-show-items">
+                {space.items.map((item) => (
+                  <article className="qr-show-item" key={item.name}>
+                    <div className="qr-show-art" aria-hidden="true"><i /></div>
+                    <div className="qr-show-item-copy">
+                      <b>{item.name}</b>
+                      <small>{item.meta}</small>
+                    </div>
+                    <span className="qr-show-price">RWF {item.price}</span>
+                  </article>
+                ))}
+              </div>
+              <div className="qr-show-actions">
+                <span>{space.actions[0]}</span>
+                <span>{space.actions[1]}</span>
+              </div>
+              <div className="qr-show-modules">
+                {space.modules.map((module) => <span key={module}><Check size={11} aria-hidden="true" /> {t(module)}</span>)}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </section>
-
-    <section id="features" className="ref-features"><div className="landing-shell ref-feature-layout"><Reveal className="ref-feature-intro"><span className="ref-section-label">{t("WHY CHOOSE E-BUSINESSRW?")}</span><h2>{t("Everything you need to grow your business.")}</h2><p>{t("Get the tools to create your online store, manage your products and reach new customers with ease.")}</p></Reveal><div className="ref-feature-cards">{features.map(({ icon: Icon, title, description, tone }, index) => <Reveal key={title} delay={index * 55}><article className="ref-feature-card"><span className={`ref-feature-icon ${tone}`}><Icon size={21} /></span><h3>{t(title)}</h3><p>{t(description)}</p></article></Reveal>)}</div></div></section>
-
-    <section id="industries" className="ref-categories"><div className="landing-shell ref-category-layout"><Reveal className="ref-category-intro"><span className="ref-section-label">{t("POPULAR CATEGORIES")}</span><h2>{t("Explore a wide range of products.")}</h2><p>{t("From food and fashion to electronics and home essentials, find everything in one place.")}</p><Link to="/register" className="ref-small-button">{t("Browse all categories")} <ArrowRight size={13} /></Link></Reveal><div className="ref-category-cards">{categoryCards.map(({ name, photo }, index) => <Reveal key={name} delay={index * 50}><Link to="/register" className="ref-category-tile"><img src={photo} alt="" loading="lazy" /><span><b>{t(name)}</b><small>{t("Explore")} <ArrowRight size={11} /></small></span></Link></Reveal>)}</div></div></section>
-
-    <section id="how-it-works" className="ref-how"><div className="landing-shell ref-how-layout">
-      <Reveal className="ref-how-intro"><span className="ref-section-label ref-how-pill">{t("HOW IT WORKS")}</span><h2>{t("Start in 4 simple steps.")}</h2><p>{t("Get your business online and start reaching customers in no time.")}</p></Reveal>
-      <div className="ref-step-row">{steps.map(({ icon: Icon, title, copy }, index) => <Reveal key={title} delay={index * 55}><article className="ref-step"><div className="ref-step-visual"><span>{index + 1}</span><i><Icon size={24} /></i>{index < steps.length - 1 && <ArrowRight className="ref-step-arrow" size={17} />}</div><h3>{t(title)}</h3><p>{t(copy)}</p></article></Reveal>)}</div>
-      <Reveal className="ref-join-card"><div className="ref-join-copy"><span className="ref-join-icon"><Store size={23} /></span><b>{t("Join thousands of business owners already online.")}</b><p>{t("Your success is just a few clicks away.")}</p><Link to="/register" className="ref-button">{t("Get started free")} <ArrowRight size={14} /></Link></div><div className="ref-join-preview" aria-hidden="true"><div className="ref-join-browser"><i /><i /><i /><span>e-businessRw / your-business</span></div><div className="ref-join-store-banner"><b>{t("Your business, online")}</b><small>{t("Products customers can explore")}</small></div><div className="ref-join-products"><i /><i /><i /></div><div className="ref-join-phone"><b>e-businessRw</b><i /><i /></div></div><div className="ref-join-leaf" /></Reveal>
-    </div></section>
-
-    <section id="about" className="ref-proof"><div className="landing-shell ref-proof-layout">
-      <Reveal className="ref-proof-photo"><img src="https://images.unsplash.com/photo-1556742049-0cfed4f6a45d?auto=format&fit=crop&w=950&q=85" alt={t("A local business owner helping a customer")} loading="lazy" /><span><i><Store size={18} /></i><b>{t("Local business owner")}</b><small>{t("Ready to be discovered")}</small></span></Reveal>
-      <Reveal className="ref-proof-story"><span className="ref-section-label">{t("BUILT FOR LOCAL BUSINESSES")}</span><h2>{t("Give customers one clear place to discover your business.")}</h2><p>{t("Share your story, show what you offer, and make it easier for people to reach you when they are ready.")}</p><div className="ref-proof-link-card"><span><Link2 size={17} /> {t("Your e-businessRw page")}</span><b>{t("Products, services, and contact details in one shareable place.")}</b></div></Reveal>
-      <Reveal className="ref-proof-benefits"><h3>{t("Everything customers need to take the next step.")}</h3><p>{t("Keep the important parts of your business easy to find.")}</p><div className="ref-proof-benefit-list"><div><i><Store size={19} /></i><span><b>{t("Your online storefront")}</b><small>{t("Showcase products and services in one place.")}</small></span></div><div><i><ClipboardList size={19} /></i><span><b>{t("Customer requests")}</b><small>{t("Keep enquiries organized in your account.")}</small></span></div><div><i><ShieldCheck size={19} /></i><span><b>{t("Business details")}</b><small>{t("Help customers know how to find and contact you.")}</small></span></div></div><Link to="/register" className="ref-proof-link">{t("Create your business page")} <ArrowRight size={15} /></Link></Reveal>
-    </div></section>
-
-    <section id="contact" className="ref-cta"><div className="landing-shell ref-cta-inner"><div><span className="ref-section-label">{t("GET STARTED TODAY")}</span><h2>{t("Your business deserves to be seen.")}</h2><p>{t("Join e-businessRw and give your products the visibility they need.")}</p></div><Link to="/register" className="ref-cta-button">{t("Get started free")} <ArrowRight size={15} /><small>{t("No website needed")}</small></Link><div className="ref-cta-leaves" aria-hidden="true"><i /><i /><i /></div></div></section>
-
-    <footer className="ref-footer"><div className="landing-shell"><div className="ref-footer-main"><div><Brand light /><small>{t("Your Business Online")}</small></div><nav aria-label={t("Footer")}><a href="#features">{t("Features")}</a><a href="#how-it-works">{t("How it works")}</a><Link to="/pricing">{t("Pricing")}</Link><a href="#about">{t("About")}</a><a href="#contact">{t("Contact")}</a></nav><div className="ref-socials"><a href="#contact" aria-label="Facebook">f</a><a href="#contact" aria-label="Instagram">◎</a><a href="#contact" aria-label="X">𝕏</a><a href="#contact" aria-label="YouTube">▶</a></div></div><div className="ref-footer-bottom"><span>© {new Date().getFullYear()} e-businessRw. {t("All rights reserved.")}</span><div><a href="#contact">{t("Privacy policy")}</a><a href="#contact">{t("Terms of service")}</a><a href="#contact">{t("Support")}</a></div></div></div></footer>
-  </div>;
+  );
 }
 
-interface ListedBusiness {
-  id: string;
-  name: string;
-  slug: string;
-  category: string;
-}
+/* ================================================================== page */
 
-type DemoTab = "products" | "request" | "quote" | "contact";
-type CatalogTab = "products" | "services";
+export default function LandingPage() {
+  const { t } = useLanguage();
+  const rootRef = useSectionReveal();
+  const { data: liveBusinesses } = usePublicBusinessList<LiveExampleBusiness>();
+  const liveExample = liveBusinesses?.find((business) => business.coverImageUrl) ?? liveBusinesses?.[0];
+  const liveExamplePath = liveExample ? `/b/${liveExample.slug}` : undefined;
+  const displaySlug = liveExamplePath ?? "/green-beans-coffee";
+  const displayName = liveExample?.name ?? "Green Beans Coffee";
+  const year = new Date().getFullYear();
+  const scrollToHow = () => document.getElementById("how-it-works")?.scrollIntoView({ behavior: "smooth", block: "start" });
 
-const sampleProducts = [
-  { name: "Goat Meat", description: "Made fresh to order", price: 12000 },
-  { name: "Chicken Stew", description: "A house favourite", price: 10000 },
-  { name: "Fresh Juice", description: "Seasonal fruit blend", price: 6000 },
-];
-const sampleServices = [
-  { name: "Catering for an event", description: "Talk with the business about your menu and guest count.", startingPrice: 45000, currency: "RWF", duration: null },
-  { name: "Custom service request", description: "Describe what you need and get a tailored response.", startingPrice: 25000, currency: "RWF", duration: null },
-];
-const sampleItems = [
-  { name: "On-site consultation", detail: "Measurements and materials", quantity: 1, price: 25000 },
-  { name: "Custom shelving", detail: "Made to fit · oak finish", quantity: 2, price: 85000 },
-];
-const money = (amount: number | string, currency = "RWF") => `${currency} ${Number(amount).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  return (
+    <div className="qr-landing" ref={rootRef}>
 
-function DishArtwork({ variant = 0 }: { variant?: number }) {
-  const plateX = variant % 2 ? 112 : 120;
-  return <svg aria-hidden="true" viewBox="0 0 240 150" className="size-full">
-    <rect width="240" height="150" fill={variant % 2 ? "#d7a66a" : "#c78f55"} />
-    <circle cx={plateX} cy="77" r="58" fill="#efe8d9" />
-    <circle cx={plateX} cy="77" r="48" fill="#faf6ec" />
-    <ellipse cx={plateX} cy="77" rx="38" ry="34" fill={variant % 2 ? "#8f3e1f" : "#a34721"} />
-    <ellipse cx={plateX - 12} cy="69" rx="12" ry="8" fill="#d88431" transform="rotate(-25 108 69)" />
-    <ellipse cx={plateX + 12} cy="83" rx="13" ry="8" fill="#e39a39" transform="rotate(20 132 83)" />
-    <ellipse cx={plateX - 5} cy="94" rx="12" ry="7" fill="#c96b29" transform="rotate(12 115 94)" />
-    <path d={`M${plateX - 20} 61q8-12 18 0q-9 8-18 0m26 30q8-14 18-2q-10 9-18 2m-35 9q8-13 16-4q-8 10-16 4`} fill="#5c8140" />
-    <circle cx={plateX + 2} cy="67" r="3" fill="#b8c56b" /><circle cx={plateX - 14} cy="86" r="3" fill="#f0c16a" /><circle cx={plateX + 22} cy="67" r="3" fill="#f0c16a" />
-    <path d="M0 128q57-28 102 10t138-8v20H0z" fill="#42251a" opacity=".18" />
-  </svg>;
-}
+      {/* ============================================================ hero */}
+      <section className="qr-hero" aria-labelledby="qr-hero-title">
+        <div className="qr-shell">
+          <div className="qr-hero-topline" data-reveal="">
+            <span>{t("Rwanda · local business, online")}</span>
+            <strong><i aria-hidden="true" /> {t("Pages publishing right now")}</strong>
+          </div>
 
-function ProductArtwork({ category, variant }: { category?: string; variant: number }) {
-  if (category?.toLowerCase().includes("restaurant") || category?.toLowerCase().includes("cafe")) return <DishArtwork variant={variant} />;
-  return <div className="grid size-full place-items-center bg-gradient-to-br from-[#f2eee6] to-[#e4dfd5] text-[#9b8a73]"><Package size={22} strokeWidth={1.4} /></div>;
-}
-
-function Reveal({ children, className = "", delay = 0 }: { children: ReactNode; className?: string; delay?: number }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    const element = ref.current;
-    if (!element) return;
-    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches || !("IntersectionObserver" in window)) {
-      setVisible(true);
-      return;
-    }
-    const observer = new IntersectionObserver(([entry]) => {
-      if (entry?.isIntersecting) {
-        setVisible(true);
-        observer.disconnect();
-      }
-    }, { threshold: 0.12, rootMargin: "0px 0px -24px 0px" });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
-
-  return <div ref={ref} className={`${className} ${visible ? "landing-reveal-visible" : ""}`} style={{ "--reveal-delay": `${delay}ms` } as CSSProperties & { "--reveal-delay": string }}>{children}</div>;
-}
-
-function Label({ children, light = false }: { children: ReactNode; light?: boolean }) {
-  return <p className={`text-[.68rem] font-extrabold uppercase tracking-[.12em] ${light ? "text-coral" : "text-coral-dark"}`}>{children}</p>;
-}
-
-function ProductBrowser({ business, slug, compact = false }: { business?: FeaturedBusiness; slug?: string; compact?: boolean }) {
-  const products = business?.products.slice(0, compact ? 3 : 4) ?? sampleProducts.map((product, index) => ({
-    ...product, id: `illustration-${index}`, currency: "RWF", imageUrl: null,
-  }));
-  const name = business?.name ?? "AfriNaija Pots Restaurant";
-
-  return <div className="overflow-hidden rounded-[1rem] border border-[#e8e4de] bg-white shadow-[0_16px_50px_rgba(14,24,43,.13)]">
-    <div className="flex h-8 items-center gap-1.5 border-b border-[#eeeae4] bg-white px-3">
-      <span className="size-2 rounded-full bg-[#f17a69]" /><span className="size-2 rounded-full bg-[#edc05b]" /><span className="size-2 rounded-full bg-[#64b98a]" />
-      <span className="mx-auto max-w-[65%] truncate rounded-md bg-[#f8f7f4] px-4 py-1 text-[.58rem] text-muted">{slug ? `e-businessrw.rw/b/${slug}` : "e-businessrw.rw/business"}</span>
-    </div>
-    <div className="bg-[#faf9f6] p-3">
-      <div className="relative overflow-hidden rounded-lg bg-[#20170f]">
-        <div className="h-24 bg-gradient-to-br from-[#49301f] via-[#21170f] to-[#090d14] sm:h-32">
-          {business?.coverImageUrl && <img src={resolveAssetUrl(business.coverImageUrl)} alt={`${name} cover photo`} className="size-full object-cover" onError={(event) => { event.currentTarget.style.opacity = "0"; }} />}
-        </div>
-        <div className="absolute inset-0 bg-gradient-to-t from-[#0c1018]/85 via-transparent to-transparent" />
-        <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-2 p-3">
-          <div className="min-w-0 text-white"><p className="truncate font-display text-sm font-extrabold sm:text-base">{name}</p><p className="mt-0.5 text-[.6rem] text-white/75">{business?.category ?? "Restaurant"}{business?.city ? ` · ${business.city}` : " · Kigali"}</p></div>
-          {business && <BadgeCheck size={16} className="shrink-0 text-white" aria-label="Published business page" />}
-        </div>
-      </div>
-      <div className="mt-2 flex items-center justify-between border-b border-[#eae6df] pb-2 text-[.54rem] font-semibold text-muted sm:text-[.62rem]">
-        <span className="flex items-center gap-1"><MapPin size={10} /> Location</span><span className="flex items-center gap-1"><Phone size={10} /> Call</span><span className="flex items-center gap-1"><MessageCircle size={10} /> WhatsApp</span><span className="flex items-center gap-1"><Utensils size={10} /> Menu</span><span className="flex items-center gap-1"><Store size={10} /> Offers</span>
-      </div>
-      <div className="mt-2 flex items-center justify-between"><p className="text-[.62rem] font-bold sm:text-[.68rem]">Popular {business?.category?.toLowerCase().includes("restaurant") ? "dishes" : "products"}</p><span className="text-[.55rem] text-muted">{business ? "From this business" : "Example menu"}</span></div>
-      <div className={`mt-2 grid ${compact ? "grid-cols-3" : "grid-cols-4"} gap-2`}>
-        {products.slice(0, compact ? 3 : 4).map((product, index) => <div key={product.id} className="min-w-0 overflow-hidden rounded-md border border-[#eeeae4] bg-white">
-          <div className="aspect-[1.45/1] overflow-hidden bg-[#d7a66a]">{product.imageUrl ? <img src={resolveAssetUrl(product.imageUrl)} alt={product.name} className="size-full object-cover" /> : <ProductArtwork category={business?.category ?? "restaurant"} variant={index} />}</div>
-          <div className="p-1.5"><p className="truncate text-[.55rem] font-bold sm:text-[.62rem]">{product.name}</p><p className="mt-0.5 truncate text-[.52rem] text-muted sm:text-[.58rem]">{money(product.price, product.currency)}</p></div>
-        </div>)}
-      </div>
-    </div>
-  </div>;
-}
-
-function HeroShowcase({ business, slug }: { business?: FeaturedBusiness; slug?: string }) {
-  const firstProduct = business?.products.find((product) => product.imageUrl);
-  return <div className="landing-hero-product relative mx-auto w-full max-w-[44rem] lg:pl-3">
-    <div className="absolute -left-4 top-8 z-10 hidden items-center gap-2 rounded-lg border border-[#eee9e3] bg-white px-3 py-2.5 shadow-card sm:flex">
-      <span className="grid size-5 place-items-center rounded-full bg-[#fff4ef] text-coral"><Search size={12} /></span><span><strong className="block text-[.58rem]">A customer finds your business</strong><small className="block text-[.5rem] text-muted">On Google, social media or a shared link</small></span><ArrowRight size={12} className="text-muted" />
-    </div>
-    <div className="absolute -right-1 -top-5 -z-10 size-44 rounded-full bg-[#ffe5d8] blur-2xl sm:size-64" />
-    <ProductBrowser business={business} slug={slug} />
-    <div className="absolute -right-3 top-[24%] z-10 hidden w-[27%] overflow-hidden rounded-[1.5rem] border-[4px] border-[#161b20] bg-white shadow-float sm:block">
-      <div className="relative aspect-[.58/1] overflow-hidden bg-gradient-to-br from-[#49301f] to-[#111827]">
-        {(firstProduct?.imageUrl ?? business?.coverImageUrl) && <img src={resolveAssetUrl(firstProduct?.imageUrl ?? business?.coverImageUrl)} alt="" className="size-full object-cover" />}
-        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-2 pt-8 text-[.52rem] font-bold text-white">{business?.name ?? "Restaurant product page"}</div>
-      </div>
-      <div className="space-y-1.5 p-2"><div className="text-[.53rem] font-bold">{business?.name ?? "Explore the menu"}</div><div className="flex justify-around text-[.45rem] text-muted"><span>Call</span><span>WhatsApp</span><span>Menu</span></div><a href={slug ? `/b/${slug}/request` : "#live-demo"} className="block rounded bg-coral px-1 py-1.5 text-center text-[.48rem] font-bold text-white">Request Quote</a><div className="rounded border border-line py-1 text-center text-[.45rem] font-bold">View Menu</div></div>
-    </div>
-    <div className="absolute -bottom-4 left-[28%] z-10 hidden items-center gap-2 rounded-lg bg-white px-3 py-2.5 shadow-card sm:flex">
-      <CircleCheck size={17} className="shrink-0 text-success" /><span><strong className="block text-[.58rem]">Customer takes action</strong><small className="block text-[.5rem] text-muted">Requests a quote, places an order or contacts you</small></span>
-    </div>
-    {!business && <p className="mt-2 text-center text-[.62rem] text-muted">Illustrative preview · example content</p>}
-  </div>;
-}
-
-function InteractiveDemo({ business, slug }: { business?: FeaturedBusiness; slug?: string }) {
-  const [tab, setTab] = useState<DemoTab>("products");
-  const [catalogTab, setCatalogTab] = useState<CatalogTab>("products");
-  const [submitted, setSubmitted] = useState(false);
-  const [accepted, setAccepted] = useState(false);
-  const [cart, setCart] = useState<Record<string, number>>({});
-  const products = business?.products.length
-    ? business.products.slice(0, 4).map((product) => ({ ...product, price: Number(product.price) }))
-    : sampleProducts.map((product, index) => ({ ...product, id: `sample-${index}`, currency: "RWF", imageUrl: null }));
-  const services = business?.services.length
-    ? business.services.slice(0, 3).map((service) => ({ ...service, startingPrice: Number(service.startingPrice) }))
-    : sampleServices;
-  const cartTotal = products.reduce((total, item) => total + (cart[item.id] ?? 0) * item.price, 0);
-  const phone = business?.phone;
-  const whatsapp = business?.whatsapp?.replace(/\D/g, "");
-  const requestLink = slug ? `/b/${slug}/request` : "/register";
-  const tabItems: Array<{ id: DemoTab; title: string; icon: LucideIcon }> = [
-    { id: "products", title: "Explore Products", icon: Store },
-    { id: "request", title: "Request a Quote", icon: ClipboardList },
-    { id: "quote", title: "View a Quote", icon: FileCheck2 },
-    { id: "contact", title: "Contact", icon: MessageCircle },
-  ];
-
-  return <div id="live-demo" className="scroll-mt-24">
-    <div className="mb-4 flex justify-center" role="tablist" aria-label="Explore the product demonstration">
-      <div className="flex max-w-full gap-1 overflow-x-auto rounded-full border border-line bg-white p-1 shadow-sm">
-        {tabItems.map(({ id, title, icon: Icon }) => <button key={id} id={`demo-tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls="demo-panel" onClick={() => setTab(id)} className={`inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-full px-3 text-[.6rem] font-bold transition-colors sm:px-4 sm:text-[.68rem] ${tab === id ? "bg-coral text-white shadow-sm" : "text-muted hover:bg-[#f7f5f1] hover:text-ink"}`}><Icon size={13} />{title}</button>)}
-      </div>
-    </div>
-    <div className="mx-auto grid max-w-6xl items-start gap-3 lg:grid-cols-[1fr_300px]">
-      <div className="overflow-hidden rounded-xl border border-[#eeece7] bg-white p-3 shadow-sm sm:p-4">
-        <div className="mb-3 flex items-center justify-between"><h3 className="font-display text-xs font-bold">{business?.name ?? "Example business page"}</h3><span className="flex items-center gap-1 rounded-full bg-success-soft px-2 py-1 text-[.55rem] font-bold text-success"><CircleCheck size={10} />{business ? "Live page" : "Demo"}</span></div>
-        <div id="demo-panel" role="tabpanel" aria-labelledby={`demo-tab-${tab}`} aria-live="polite">
-          {tab === "products" && <div>
-            <div className="mb-2.5 flex gap-1" aria-label="Catalog type">
-              <button type="button" aria-pressed={catalogTab === "products"} onClick={() => setCatalogTab("products")} className={`rounded-full px-2.5 py-1 text-[.55rem] font-bold ${catalogTab === "products" ? "bg-coral-soft text-coral-dark" : "bg-[#f6f5f2] text-muted"}`}>Products</button>
-              <button type="button" aria-pressed={catalogTab === "services"} onClick={() => setCatalogTab("services")} className={`rounded-full px-2.5 py-1 text-[.55rem] font-bold ${catalogTab === "services" ? "bg-coral-soft text-coral-dark" : "bg-[#f6f5f2] text-muted"}`}>Services</button>
+          <div className="qr-hero-grid">
+            <div className="qr-hero-copy">
+              <span className="qr-eyebrow" data-reveal="">{t("Your business, one link")}</span>
+              <h1 id="qr-hero-title" className="qr-hero-title" data-reveal="" style={delayStyle(60)}>
+                {t("The easiest way to put")} <span className="qr-serif">{t("your business")}</span> <em>{t("online.")}</em>
+              </h1>
+              <p className="qr-hero-lede" data-reveal="" style={delayStyle(120)}>
+                {t("Turn scattered DMs, price lists and phone calls into one beautiful page — products, services and bookings, ready to share anywhere, with every request landing in a single workspace.")}
+              </p>
+              <div className="qr-hero-actions" data-reveal="" style={delayStyle(180)}>
+                <Link to="/register" className="qr-btn qr-btn--ink">
+                  {t("Create your business page")} <ArrowRight size={16} aria-hidden="true" />
+                </Link>
+                <button type="button" className="qr-btn qr-btn--ghost" onClick={scrollToHow}>
+                  {t("See how it works")} <ArrowUpRight size={15} aria-hidden="true" />
+                </button>
+              </div>
+              <div className="qr-hero-foot" data-reveal="" style={delayStyle(240)}>
+                <span><Smartphone size={14} aria-hidden="true" /> {t("Works on any phone")}</span>
+                <span><BadgeCheck size={14} aria-hidden="true" /> {t("No app needed")}</span>
+                <span><Clock3 size={14} aria-hidden="true" /> {t("Live in minutes")}</span>
+              </div>
             </div>
-            {catalogTab === "products" && <div className="grid gap-2.5 sm:grid-cols-3">
-            {products.slice(0, 3).map((product, index) => <article key={product.id} className="overflow-hidden rounded-lg border border-[#eeece7] bg-white">
-              <div className="aspect-[1.6/1] overflow-hidden bg-[#d7a66a]">{product.imageUrl ? <img src={resolveAssetUrl(product.imageUrl)} alt={product.name} className="size-full object-cover" /> : <ProductArtwork category={business?.category ?? "restaurant"} variant={index} />}</div>
-              <div className="p-2"><p className="truncate text-[.62rem] font-bold">{product.name}</p><p className="mt-0.5 text-[.55rem] text-muted">{money(product.price, product.currency)}</p><button type="button" className="mt-2 min-h-7 w-full rounded-md bg-coral px-2 text-[.58rem] font-bold text-white transition hover:bg-coral-dark" onClick={() => setCart((current) => ({ ...current, [product.id]: (current[product.id] ?? 0) + 1 }))}>Add to Cart</button></div>
-            </article>)}
-            </div>}
-            {catalogTab === "services" && <div className="grid gap-2.5 sm:grid-cols-2">
-              {services.map((service) => <article key={service.name} className="flex items-center justify-between gap-3 rounded-lg border border-[#eeece7] bg-white p-3">
-                <div className="min-w-0"><p className="truncate text-[.62rem] font-bold">{service.name}</p><p className="mt-1 line-clamp-2 text-[.55rem] leading-relaxed text-muted">{service.description || "Ask the business for more details."}</p></div>
-                <div className="shrink-0 text-right"><p className="text-[.58rem] font-bold">{service.startingPrice ? `From ${money(service.startingPrice, service.currency)}` : "Ask for price"}</p><a href={requestLink} className="mt-1 inline-block text-[.55rem] font-bold text-coral-dark">Request a quote</a></div>
-              </article>)}
-              {business?.services.length === 0 && <p className="col-span-full rounded-lg bg-[#f8f7f4] p-3 text-[.58rem] text-muted">This business hasn’t published services yet.</p>}
-            </div>}
-            {slug && <a href={`/b/${slug}`} className="mt-2.5 inline-flex items-center gap-1 text-[.55rem] font-bold text-muted hover:text-coral-dark">View full business page <ArrowRight size={10} /></a>}
-          </div>}
-          {tab === "request" && <form className="mx-auto max-w-md space-y-3" onSubmit={(event) => { event.preventDefault(); setSubmitted(true); }}>
-            <h4 className="font-display text-sm font-bold">Request a quote <span className="ml-2 text-[.6rem] font-normal text-muted">Interactive preview</span></h4>
-            <label className="block text-xs font-semibold" htmlFor="demo-name">Your name<input id="demo-name" className="field mt-1.5 min-h-9 text-xs" placeholder="e.g. Alex" required onChange={() => setSubmitted(false)} /></label>
-            <label className="block text-xs font-semibold" htmlFor="demo-need">What do you need?<textarea id="demo-need" className="field mt-1.5 min-h-16 resize-y text-xs" placeholder="Tell the business what you need" required onChange={() => setSubmitted(false)} /></label>
-            {submitted && <p role="status" className="rounded-lg bg-success-soft p-2 text-xs font-semibold text-success">Demo complete — no real request was submitted.</p>}
-            <Button type="submit" className="min-h-8 w-full text-xs" icon={submitted ? <Check size={13} /> : <Send size={13} />}>{submitted ? "Request flow previewed" : "Preview request flow"}</Button>
-          </form>}
-          {tab === "quote" && <div className="mx-auto max-w-md rounded-lg border border-line bg-white p-3">
-            <div className="flex items-start justify-between gap-2 border-b border-line pb-2"><div><p className="text-[.55rem] font-bold uppercase tracking-wider text-coral-dark">Demonstration quote</p><h4 className="mt-1 font-display text-xs font-bold">{business?.name ?? "Kivu Crafted Studio"}</h4></div><span className={`rounded-full px-2 py-1 text-[.53rem] font-bold ${accepted ? "bg-success-soft text-success" : "bg-warning-soft text-warning"}`}>{accepted ? "Accepted · demo" : "Ready to review"}</span></div>
-            <div className="mt-2 space-y-2">{sampleItems.map((item) => <div key={item.name} className="flex justify-between gap-2 border-b border-line pb-2 text-[.65rem]"><div><p className="font-semibold">{item.name}</p><p className="mt-1 text-[.55rem] text-muted">{item.detail} · {item.quantity} × {money(item.price)}</p></div><strong className="shrink-0">{money(item.quantity * item.price)}</strong></div>)}</div>
-            <div className="mt-2 flex items-center justify-between text-xs font-bold"><span>Total</span><span>{money(sampleItems.reduce((sum, item) => sum + item.quantity * item.price, 0))}</span></div>
-            <p className="mt-2 text-[.55rem] text-muted">Example only. Accepting creates no real quote or payment.</p>
-            <Button type="button" variant={accepted ? "secondary" : "primary"} className="mt-2 min-h-8 w-full text-xs" onClick={() => setAccepted(!accepted)} icon={accepted ? <Check size={12} /> : <FileCheck2 size={12} />}>{accepted ? "Reset quote demo" : "Accept quote · demo"}</Button>
-          </div>}
-          {tab === "contact" && <div className="mx-auto max-w-md space-y-2.5">
-            <h4 className="font-display text-sm font-bold">Choose how to connect</h4>
-            <p className="mb-3 text-xs text-muted">Available contact options for this business.</p>
-            {phone && <a className="flex items-center gap-2.5 rounded-lg border border-line p-3 text-xs font-semibold transition hover:border-coral/50" href={`tel:${phone}`}><Phone size={15} className="text-coral" />Call the business <span className="ml-auto text-muted">{phone}</span></a>}
-            {whatsapp && <a className="flex items-center gap-2.5 rounded-lg border border-line p-3 text-xs font-semibold transition hover:border-coral/50" href={`https://wa.me/${whatsapp}`} target="_blank" rel="noreferrer"><MessageCircle size={15} className="text-success" />Continue on WhatsApp <ArrowRight size={13} className="ml-auto text-muted" /></a>}
-            {!phone && !whatsapp && <p className="rounded-lg border border-dashed border-line p-3 text-xs text-muted">This business has not added contact details to the demo page.</p>}
-            <a className="flex items-center justify-between rounded-lg bg-ink px-3 py-2.5 text-xs font-bold text-white" href={requestLink}>Send a structured request <ArrowRight size={13} /></a>
-          </div>}
+
+            <div className="qr-stage" data-reveal="" style={delayStyle(160)}>
+              <div className="qr-stage-glow" aria-hidden="true" />
+              <div className="qr-stage-orbit" aria-hidden="true" />
+              <div className="qr-preview">
+                <div className="qr-preview-bar">
+                  <span className="qr-dots" aria-hidden="true"><i /><i /><i /></span>
+                  <span className="qr-preview-url">ebusinessrw<b>.rw</b><em>/green-beans-coffee</em></span>
+                  <span className="qr-preview-share" aria-hidden="true"><Share2 size={11} /></span>
+                </div>
+                <div className="qr-preview-cover">
+                  <div className="qr-cover-top">
+                    <span className="qr-live-chip"><i /> {t("Open today")}</span>
+                    <span className="qr-cover-label">{t("Kigali · Café")}</span>
+                  </div>
+                  <div className="qr-cover-copy">
+                    <b>{t("Green Beans Coffee")}</b>
+                    <small>{t("Coffee, pastry & slow mornings")}</small>
+                  </div>
+                  <div className="qr-rating">
+                    <i aria-hidden="true">
+                      {Array.from({ length: 5 }).map((_, index) => <Star key={index} size={9} fill="currentColor" />)}
+                    </i>
+                    {t("4.9 · 128 visits")}
+                  </div>
+                </div>
+                <div className="qr-preview-body">
+                  <div className="qr-cat-pills">
+                    <span>{t("Menu")}</span>
+                    <span>{t("Our story")}</span>
+                    <span>{t("Visit")}</span>
+                  </div>
+                  <div className="qr-mini-grid">
+                    {([
+                      ["a", "Espresso brew", "RWF 2,800"],
+                      ["b", "Bushera bowl", "RWF 4,000"],
+                      ["c", "Banana bread", "RWF 5,200"],
+                    ] as Array<[string, string, string]>).map(([art, name, price]) => (
+                      <div className="qr-mini-product" key={name}>
+                        <div className={`qr-mini-art qr-mini-art--${art}`} aria-hidden="true"><i /></div>
+                        <div className="qr-mini-meta"><b>{name}</b><small>{price}</small></div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="qr-preview-foot">
+                    <span>{t("Order now")}</span>
+                    <span>{t("Book a table")}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="qr-inbox-card" aria-hidden="true">
+                <div className="qr-inbox-head"><span>{t("Requests")}</span><i /></div>
+                <div className="qr-inbox-body">
+                  <b><MessageCircle size={11} /> {t("New request")}</b>
+                  <p>{t("“Do you have a table tonight at 7?”")}</p>
+                </div>
+                <div className="qr-inbox-actions"><span>{t("Reply")}</span><span>{t("Accept")}</span></div>
+              </div>
+
+              <div className="qr-paid-pill">
+                <span className="qr-paid-icon"><Wallet size={14} aria-hidden="true" /></span>
+                <div><b>{t("Payment received")}</b><small>{t("Aline · Mobile Money · RWF 8,200")}</small></div>
+              </div>
+
+              <span className="qr-stage-caption" aria-hidden="true">{t("Your page, live")}</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ============================================================ ticker */}
+      <div className="qr-ticker" aria-hidden="true">
+        <div className="qr-ticker-track">
+          {[0, 1].map((group) => (
+            <div className="qr-ticker-group" key={group}>
+              {tickerItems.map((item) => <span className="qr-ticker-item" key={`${group}-${item}`}>{item}</span>)}
+            </div>
+          ))}
         </div>
       </div>
-      {tab === "products" && catalogTab === "products" && <aside className="rounded-xl border border-line bg-white p-3.5 shadow-sm">
-        <div className="flex items-center justify-between border-b border-line pb-2.5"><h4 className="text-xs font-bold">Your Cart <Heart size={12} className="inline text-coral" /></h4><span className="text-[.55rem] text-muted">{Object.values(cart).reduce((sum, quantity) => sum + quantity, 0)} items</span></div>
-        <div className="min-h-14 space-y-2 py-2.5">
-          {products.filter((product) => cart[product.id]).map((product) => <div key={product.id} className="flex items-center justify-between gap-2 text-[.58rem]"><span className="min-w-0 truncate font-semibold">{product.name} × {cart[product.id]}</span><span className="shrink-0 text-muted">{money(product.price * cart[product.id], product.currency)}</span></div>)}
-          {!Object.values(cart).some(Boolean) && <p className="py-3 text-center text-[.6rem] text-muted">Add a product to see your order here.</p>}
-        </div>
-        <div className="flex items-center justify-between border-t border-line pt-2.5 text-[.62rem] font-bold"><span>Total</span><span>{money(cartTotal)}</span></div>
-        <a href={requestLink} className="mt-2.5 flex min-h-7 items-center justify-center rounded-md bg-coral px-3 text-[.58rem] font-bold text-white transition hover:bg-coral-dark">Place Order</a>
-        <p className="mt-2 text-center text-[.52rem] text-muted">Example cart · no order is placed</p>
-      </aside>}
-      {tab === "products" && catalogTab === "services" && <aside className="rounded-xl border border-line bg-white p-3.5 shadow-sm"><span className="grid size-8 place-items-center rounded-lg bg-coral-soft text-coral"><ClipboardList size={15} /></span><h4 className="mt-2 text-xs font-bold">Need something tailored?</h4><p className="mt-1 text-[.58rem] leading-relaxed text-muted">Send the business a few details to get a response about your project.</p><a href={requestLink} className="mt-3 flex min-h-7 items-center justify-center rounded-md bg-coral px-3 text-[.58rem] font-bold text-white">Request a Quote</a></aside>}
-    </div>
-  </div>;
-}
 
+      {/* ============================================================ platform */}
+      <section id="platform" className="qr-section qr-platform" aria-labelledby="qr-platform-title">
+        <div className="qr-shell">
+          <div className="qr-platform-grid">
+            <div className="qr-platform-copy">
+              <span className="qr-eyebrow" data-reveal="">{t("The everyday challenge")}</span>
+              <h2 id="qr-platform-title" className="qr-h2" data-reveal="" style={delayStyle(60)}>
+                {t("Your work is already out there.")} <span className="qr-serif">{t("Make it easy to find.")}</span>
+              </h2>
+              <p className="qr-lede" data-reveal="" style={delayStyle(110)}>
+                {t("Most owners are already doing the work — it is just spread across chats, screenshots and notebooks. A page gathers it into one link customers can trust.")}
+              </p>
+              <div className="qr-shift-list">
+                {([
+                  ["One link, always current", "Menu, prices, services and your story in one place you own — update it in seconds."],
+                  ["Requests, not lost comments", "Orders, bookings and questions arrive structured, with the customer and details attached."],
+                  ["You keep control", "Pause a service, change a price or close a request. No developer, no waiting."],
+                ] as Array<[string, string]>).map(([title, body], index) => (
+                  <div className="qr-shift-row" key={title} data-reveal="" style={delayStyle(140 + index * 70)}>
+                    <span className="qr-shift-num">{String(index + 1).padStart(2, "0")}</span>
+                    <div><h3>{t(title)}</h3><p>{t(body)}</p></div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="qr-shift-visual" data-reveal="" style={delayStyle(120)}>
+              <div className="qr-shift-panel qr-shift-panel--before">
+                <span><i /> {t("Before · scattered")}</span>
+                <div className="qr-chat-stack">
+                  <span className="qr-chat-bubble">{t("Hi! Do you have the medium bag?")}</span>
+                  <span className="qr-chat-bubble is-right">{t("Yes — RWF 12,000")}</span>
+                  <span className="qr-chat-bubble">{t("Can I pay on delivery?")}</span>
+                  <small>{t("3 apps · 2 notebooks")}</small>
+                </div>
+                <div className="qr-shift-before-note"><Clock3 size={11} aria-hidden="true" /> {t("Answers scattered across DMs")}</div>
+              </div>
+
+              <div className="qr-shift-panel qr-shift-panel--after">
+                <span><i /> {t("After · one page")}</span>
+                <div className="qr-request-card">
+                  <b><MessageCircle size={12} aria-hidden="true" /> {t("New request from Aline")}</b>
+                  <p>{t("2 × Espresso brew · pickup today, 4pm")}</p>
+                  <div className="qr-request-actions"><span>{t("Reply")}</span><span>{t("Accept")}</span></div>
+                </div>
+                <div className="qr-url-pill"><Globe2 size={12} aria-hidden="true" /><span>ebusinessrw.rw/green-beans-coffee</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ============================================================ capabilities */}
+      <section id="capabilities" className="qr-section" aria-labelledby="qr-capabilities-title">
+        <div className="qr-shell">
+          <div className="qr-section-head">
+            <div data-reveal="">
+              <span className="qr-eyebrow">{t("Built into your page")}</span>
+              <h2 id="qr-capabilities-title" className="qr-h2">
+                {t("Everything customers need.")} <span className="qr-serif">{t("Nothing they don't.")}</span>
+              </h2>
+            </div>
+            <p className="qr-lede" data-reveal="" style={delayStyle(80)}>
+              {t("Capabilities switch on to match your business — a café shows a menu, a salon shows bookings. Choose what fits and hide the rest.")}
+            </p>
+          </div>
+
+          <div className="qr-bento">
+            <article className="qr-bento-card qr-bento-card--wide" data-reveal="">
+              <div className="qr-bento-copy">
+                <span className="qr-eyebrow">{t("Catalogue")}</span>
+                <h3>{t("Products and services, always current")}</h3>
+                <p>{t("Add a price once, change it whenever. Customers see exactly what is available today.")}</p>
+              </div>
+              <div className="qr-bento-visual">
+                <div className="qr-mini-store">
+                  <div className="qr-mini-store-head"><b>{t("Green Beans Coffee")}</b><span>{t("Open today")}</span></div>
+                  <div className="qr-mini-store-grid">
+                    {([
+                      ["a", "Espresso brew", "RWF 2,800"],
+                      ["b", "Bushera bowl", "RWF 4,000"],
+                      ["c", "Banana bread", "RWF 5,200"],
+                    ] as Array<[string, string, string]>).map(([art, name, price]) => (
+                      <div className="qr-mini-store-item" key={name}>
+                        <div className={`qr-mini-art qr-mini-art--${art}`} aria-hidden="true"><i /></div>
+                        <b>{name}</b><small>{price}</small>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </article>
+
+            <article className="qr-bento-card qr-bento-card--narrow qr-bento-card--forest" data-reveal="" style={delayStyle(80)}>
+              <div className="qr-bento-copy">
+                <span className="qr-eyebrow">{t("Requests")}</span>
+                <h3>{t("One inbox for every customer")}</h3>
+                <p>{t("Orders, bookings and questions land with names and details — not buried in comments.")}</p>
+              </div>
+              <div className="qr-bento-visual">
+                <div className="qr-mini-inbox">
+                  {([
+                    ["A", "Aline M.", "Table for 2 · tonight", "New", false],
+                    ["E", "Eric N.", "Cement × 20 · quote", "Quote", true],
+                    ["D", "Diane K.", "Braids · Saturday", "Booked", false],
+                  ] as Array<[string, string, string, string, boolean]>).map(([initial, name, detail, status, orange]) => (
+                    <div className="qr-inbox-row" key={name}>
+                      <span className="qr-inbox-avatar">{initial}</span>
+                      <div><b>{name}</b><small>{detail}</small></div>
+                      <span className={`qr-inbox-status${orange ? " is-orange" : ""}`}>{t(status)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </article>
+
+            <article className="qr-bento-card qr-bento-card--narrow qr-bento-card--dark" data-reveal="" style={delayStyle(120)}>
+              <div className="qr-bento-copy">
+                <span className="qr-eyebrow">{t("Payments")}</span>
+                <h3>{t("Mobile Money, confirmed")}</h3>
+                <p>{t("Send a payment request and see it settle. No more screenshot archaeology.")}</p>
+              </div>
+              <div className="qr-bento-visual">
+                <div className="qr-mini-pay">
+                  <div className="qr-pay-card">
+                    <span className="qr-pay-icon"><Wallet size={15} aria-hidden="true" /></span>
+                    <div><b>{t("Payment received")}</b><small>{t("Aline · MTN MoMo")}</small></div>
+                    <strong>RWF 8,200</strong>
+                  </div>
+                  <div className="qr-pay-row"><i aria-hidden="true" /> {t("Matched to order #041")}</div>
+                </div>
+              </div>
+            </article>
+
+            <article className="qr-bento-card qr-bento-card--wide qr-bento-card--orange" data-reveal="" style={delayStyle(160)}>
+              <div className="qr-bento-copy">
+                <span className="qr-eyebrow">{t("Insight")}</span>
+                <h3>{t("See what customers actually do")}</h3>
+                <p>{t("Page visits, requests and top actions — the signals that tell you what to stock, post or fix next.")}</p>
+              </div>
+              <div className="qr-bento-visual">
+                <div className="qr-mini-chart">
+                  <div className="qr-chart-bars" aria-hidden="true">
+                    {[38, 55, 42, 68, 58, 88, 74].map((height, index) => (
+                      <i key={index} style={{ height: `${height}%` }} className={index === 5 ? "is-peak" : ""} />
+                    ))}
+                  </div>
+                  <div className="qr-chart-copy"><b>+34%</b><small>{t("visits this week")}</small></div>
+                </div>
+              </div>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      {/* ============================================================ showcase */}
+      <Showcase liveExamplePath={liveExamplePath} />
+
+      {/* ============================================================ how it works */}
+      <section id="how-it-works" className="qr-section qr-how" aria-labelledby="qr-how-title">
+        <div className="qr-shell">
+          <div className="qr-section-head">
+            <div data-reveal="">
+              <span className="qr-eyebrow">{t("How it works")}</span>
+              <h2 id="qr-how-title" className="qr-h2">
+                {t("From one link to")} <span className="qr-serif">{t("I found you.")}</span>
+              </h2>
+            </div>
+            <p className="qr-lede" data-reveal="" style={delayStyle(80)}>
+              {t("Start with what you already know about your business, share it once, and let the page quietly do the rest.")}
+            </p>
+          </div>
+
+          <div className="qr-how-grid">
+            <div className="qr-steps">
+              {([
+                ["Create your page", "Register, add your name, category and location. Your demo checkout activates right away."],
+                ["Publish what you sell", "Add products or services with prices. Your page updates in seconds, not days."],
+                ["Share one link", "Put it on WhatsApp, Instagram, a receipt. Requests, bookings and orders land in your workspace."],
+              ] as Array<[string, string]>).map(([title, body], index) => (
+                <div className="qr-step" key={title} data-reveal="" style={delayStyle(index * 90)}>
+                  <span className="qr-step-num">{String(index + 1).padStart(2, "0")}</span>
+                  <div><h3>{t(title)}</h3><p>{t(body)}</p></div>
+                </div>
+              ))}
+            </div>
+
+            <div className="qr-link-card" data-reveal="" style={delayStyle(120)}>
+              <div className="qr-link-card-head">
+                <span>{t("Your page link")}</span>
+                <span className="qr-published"><i /> {t("Published")}</span>
+              </div>
+              <div className="qr-link-card-body">
+                <b>{displayName}</b>
+                <p>{t("Share this one link on WhatsApp, Instagram, a receipt or your shop window.")}</p>
+                <div className="qr-link-row">
+                  <span>ebusinessrw<b>.rw</b>{displaySlug}</span>
+                  <CopyLinkButton path={displaySlug} />
+                </div>
+                <div className="qr-link-mini">
+                  <span><b>128</b>{t("Visits")}</span>
+                  <span><b>9</b>{t("Requests")}</span>
+                  <span><b>3</b>{t("Orders today")}</span>
+                </div>
+              </div>
+              <div className="qr-link-card-foot">
+                <ShieldCheck size={14} aria-hidden="true" /> {t("Free to create · publish when you're ready")}
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ============================================================ local */}
+      <section className="qr-section qr-local" aria-labelledby="qr-local-title">
+        <div className="qr-shell">
+          <div className="qr-local-grid">
+            <div data-reveal="">
+              <span className="qr-eyebrow">{t("Made in Rwanda")}</span>
+              <h2 id="qr-local-title">
+                {t("Built in Kigali.")} <span className="qr-serif">{t("For every corner of Rwanda.")}</span>
+              </h2>
+              <p>
+                {t("Mobile-first, Mobile Money aware, and designed around how business actually happens here — from Nyabugogo to Rubavu.")}
+              </p>
+              <div className="qr-local-stats">
+                <div className="qr-local-stat"><b>RWF</b><small>{t("Pricing in local currency")}</small></div>
+                <div className="qr-local-stat"><b>MTN · Airtel</b><small>{t("Mobile Money payments")}</small></div>
+                <div className="qr-local-stat"><b>{t("Kinyarwanda")}</b><small>{t("Built for local customers")}</small></div>
+              </div>
+            </div>
+            <div className="qr-coords" data-reveal="" style={delayStyle(100)} aria-hidden="true">
+              <span className="qr-coords-ring" /><span className="qr-coords-ring" /><span className="qr-coords-ring" /><span className="qr-coords-ring" />
+              <span className="qr-coords-pin"><MapPin size={22} /></span>
+              <div className="qr-coords-copy">
+                <b>1°57′S · 30°04′E</b>
+                <small>{t("Kigali, Rwanda")}</small>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ============================================================ pricing */}
+      <section id="pricing" className="qr-section qr-pricing" aria-labelledby="qr-pricing-title">
+        <div className="qr-shell">
+          <div className="qr-section-head">
+            <div data-reveal="">
+              <span className="qr-eyebrow">{t("Simple publishing")}</span>
+              <h2 id="qr-pricing-title" className="qr-h2">
+                {t("Free to be found.")} <span className="qr-serif">{t("Pay to publish.")}</span>
+              </h2>
+            </div>
+            <p className="qr-lede" data-reveal="" style={delayStyle(80)}>
+              {t("Creating your page and receiving requests is free. Publish products and services when you're ready for customers to find you.")}
+            </p>
+          </div>
+
+          <div className="qr-price-grid">
+            <article className="qr-price-card" data-reveal="">
+              <span className="qr-price-tag">{t("Monthly")}</span>
+              <h3>{t("Monthly publishing")}</h3>
+              <div className="qr-price-value"><b>10,000</b><small>RWF / 30 days</small></div>
+              <p>{t("Flexible access for businesses getting started.")}</p>
+              <div className="qr-price-list">
+                {["Publish up to 50 products", "Business page and customer requests", "Verified Mobile Money payment", "Renew when access is ending"].map((feature) => (
+                  <span key={feature}><Check size={13} aria-hidden="true" /> {t(feature)}</span>
+                ))}
+              </div>
+              <Link to="/pricing" className="qr-btn qr-btn--ghost">{t("Choose monthly")} <ArrowRight size={14} aria-hidden="true" /></Link>
+            </article>
+
+            <article className="qr-price-card qr-price-card--featured" data-reveal="" style={delayStyle(90)}>
+              <span className="qr-price-tag">{t("Best value")}</span>
+              <h3>{t("Annual publishing")}</h3>
+              <div className="qr-price-value"><b>100,000</b><small>RWF / 365 days</small></div>
+              <p>{t("One payment for a full year of product visibility.")}</p>
+              <div className="qr-price-list">
+                {["Everything in Monthly", "Publish up to 50 products", "Save RWF 20,000 vs monthly", "One annual renewal"].map((feature) => (
+                  <span key={feature}><Check size={13} aria-hidden="true" /> {t(feature)}</span>
+                ))}
+              </div>
+              <Link to="/pricing" className="qr-btn qr-btn--light">{t("Choose annual")} <ArrowRight size={14} aria-hidden="true" /></Link>
+            </article>
+          </div>
+
+          <div className="qr-price-note" data-reveal="" style={delayStyle(150)}>
+            <span><ShieldCheck size={13} aria-hidden="true" /> {t("No card needed")}</span>
+            <span><Clock3 size={13} aria-hidden="true" /> {t("Switch or renew anytime")}</span>
+            <span><BadgeCheck size={13} aria-hidden="true" /> {t("Mobile Money, verified")}</span>
+          </div>
+        </div>
+      </section>
+
+      {/* ============================================================ faq */}
+      <section id="faq" className="qr-section qr-faq" aria-labelledby="qr-faq-title">
+        <div className="qr-shell">
+          <div className="qr-faq-grid">
+            <div className="qr-faq-intro" data-reveal="">
+              <span className="qr-eyebrow">{t("Good to know")}</span>
+              <h2 id="qr-faq-title" className="qr-h2">{t("Questions,")} <span className="qr-serif">{t("answered.")}</span></h2>
+              <p className="qr-lede">{t("A few honest answers about what your page is, what it can do, and how to start.")}</p>
+              <Link to="/register" className="qr-arrow-link">{t("Start with a page")} <ArrowUpRight size={15} aria-hidden="true" /></Link>
+            </div>
+            <div className="qr-faq-list" data-reveal="" style={delayStyle(80)}>
+              {faqs.map(([q, a], index) => <FaqItem key={q} q={t(q)} a={t(a)} index={index} open={index === 0} />)}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ============================================================ final */}
+      <section className="qr-section" aria-labelledby="qr-final-title">
+        <div className="qr-shell">
+          <div className="qr-final" data-reveal="">
+            <div className="qr-final-inner">
+              <div>
+                <span className="qr-eyebrow">{t("Your next customer is one link away")}</span>
+                <h2 id="qr-final-title">{t("Give your business a")} <span className="qr-serif">{t("place to be found.")}</span></h2>
+                <div className="qr-final-actions">
+                  <Link to="/register" className="qr-btn qr-btn--ink">{t("Create your business page")} <ArrowRight size={16} aria-hidden="true" /></Link>
+                  {liveExamplePath ? (
+                    <Link to={liveExamplePath} className="qr-btn qr-btn--ghost">{t("See a real page")} <ArrowUpRight size={15} aria-hidden="true" /></Link>
+                  ) : (
+                    <Link to="/pricing" className="qr-btn qr-btn--ghost">{t("See pricing")} <ArrowUpRight size={15} aria-hidden="true" /></Link>
+                  )}
+                </div>
+                <p className="qr-final-note">{t("Free to create · No card needed · Live in minutes")}</p>
+              </div>
+              <div className="qr-final-ticket">
+                <span><Sparkles size={12} aria-hidden="true" /> {t("Your page, at a glance")}</span>
+                <b>{t("One link that works while you work.")}</b>
+                <div className="qr-final-ticket-row">
+                  <Globe2 size={14} aria-hidden="true" />
+                  <span>ebusinessrw<b>.rw</b>{displaySlug}</span>
+                </div>
+                <small>{t("Products · Bookings · Requests · Payments")}</small>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ============================================================ footer */}
+      <footer className="qr-footer">
+        <div className="qr-shell">
+          <div className="qr-footer-top">
+            <div className="qr-footer-brand">
+              <Brand />
+              <p>{t("One page for your products, services and customer requests — built for local businesses in Rwanda.")}</p>
+            </div>
+            <div className="qr-footer-cols">
+              <div className="qr-footer-col">
+                <b>{t("Product")}</b>
+                <a href="#platform">{t("Why a page")}</a>
+                <a href="#capabilities">{t("Capabilities")}</a>
+                <a href="#how-it-works">{t("How it works")}</a>
+                <a href="#pricing">{t("Pricing")}</a>
+              </div>
+              <div className="qr-footer-col">
+                <b>{t("Business types")}</b>
+                <a href="#industries">{t("Cafés & restaurants")}</a>
+                <a href="#industries">{t("Salons & barbers")}</a>
+                <a href="#industries">{t("Hardware stores")}</a>
+                <a href="#industries">{t("Guest houses")}</a>
+              </div>
+              <div className="qr-footer-col">
+                <b>{t("Get started")}</b>
+                <Link to="/register">{t("Create a page")}</Link>
+                <Link to="/login">{t("Log in")}</Link>
+                <a href="#faq">{t("FAQ")}</a>
+                <Link to={displaySlug}>{t("See a live page")}</Link>
+              </div>
+            </div>
+          </div>
+          <div className="qr-footer-bottom">
+            <span><i aria-hidden="true" /> {t("All systems normal · Kigali")}</span>
+            <span>© {year} e-businessRw. {t("Made in Rwanda.")}</span>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
+}

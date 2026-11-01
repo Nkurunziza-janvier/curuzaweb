@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, BadgeCheck, CalendarDays, CheckCircle2, Clock3, Copy, MapPin, MessageCircle, Phone, Star, XCircle } from "lucide-react";
 import { bookingService } from "../services/api";
 import { usePublicBooking } from "../hooks/apiHooks";
+import { useDocumentMeta } from "../hooks/useDocumentMeta";
 import { Button, Card, Heading, Label, Textarea } from "../components/ui";
 import BrandLoader from "../components/BrandLoader";
 import { LanguageSwitcher, useLanguage } from "../i18n";
@@ -50,6 +51,11 @@ export default function BookingStatusPage() {
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["public-booking", publicToken] }),
   });
 
+  useDocumentMeta({
+    title: booking ? `Booking ${booking.bookingNumber} · ${booking.business.name}` : "Booking status · e-businessRw",
+    description: booking ? `Check the status of booking ${booking.bookingNumber} with ${booking.business.name}.` : undefined,
+  });
+
   if (isLoading) return <BrandLoader />;
   if (isError || !booking) return <main className="grid min-h-screen place-items-center bg-[#f3f8f5] p-5"><div className="absolute right-5 top-5"><LanguageSwitcher compact /></div><Card className="max-w-lg p-8 text-center"><span className="mx-auto grid size-14 place-items-center rounded-full bg-[#fff0ec] text-[#b04a33]"><XCircle size={25} /></span><Heading as="h1" className="mt-4">{t("Booking link unavailable")}</Heading><p className="mt-3 text-sm text-muted">{error?.message ?? t("This private link is invalid or the booking no longer exists.")}</p><Link to="/" className="btn btn-secondary mt-6">{t("Back to e-businessRw")}</Link></Card></main>;
 
@@ -82,7 +88,7 @@ export default function BookingStatusPage() {
         </div>
 
         <aside className="space-y-4 lg:sticky lg:top-6 lg:self-start">
-          <Card className="p-5"><p className="text-[10px] font-bold uppercase tracking-[.14em] text-[#6b8d82]">{t("Business")}</p><h2 className="mt-1 font-display text-lg font-bold">{booking.business.name}</h2><div className="mt-3 space-y-2 text-xs text-[#4e6a63]">{[booking.business.address, booking.business.city, booking.business.country].filter(Boolean).length > 0 && <p className="flex items-start gap-2"><MapPin size={14} className="mt-0.5 shrink-0 text-[#0b8661]" />{[booking.business.address, booking.business.city, booking.business.country].filter(Boolean).join(", ")}</p>}{booking.business.phone && <a href={`tel:${booking.business.phone}`} className="flex items-center gap-2 hover:text-[#087553]"><Phone size={14} className="text-[#0b8661]" />{booking.business.phone}</a>}</div><div className="mt-4 grid gap-2">{whatsappDigits && <a href={`https://wa.me/${whatsappDigits}`} target="_blank" rel="noreferrer" className="btn btn-secondary !min-h-10 text-xs"><MessageCircle size={15} />{t("Contact on WhatsApp")}</a>}{booking.business.phone && <a href={`tel:${booking.business.phone}`} className="btn btn-ghost !min-h-10 text-xs"><Phone size={15} />{t("Call business")}</a>}</div></Card>
+          <Card className="p-5"><p className="text-[10px] font-bold uppercase tracking-[.14em] text-[#6b8d82]">{t("Business")}</p><h2 className="mt-1 font-display text-lg font-bold">{booking.business.name}</h2><div className="mt-3 space-y-2 text-xs text-[#4e6a63]">{[booking.business.address, booking.business.city, booking.business.country].filter(Boolean).length > 0 && <p className="flex items-start gap-2"><MapPin size={14} className="mt-0.5 shrink-0 text-[#0b8661]" />{[booking.business.address, booking.business.city, booking.business.country].filter(Boolean).join(", ")}</p>}{booking.business.phone && <a href={`tel:${booking.business.phone}`} className="flex items-center gap-2 hover:text-[#087553]"><Phone size={14} className="text-[#0b8661]" />{booking.business.phone}</a>}</div><div className="mt-4 grid gap-2">{whatsappDigits && <a href={`https://wa.me/${whatsappDigits}?text=${encodeURIComponent(`Hello ${booking.business.name}, I would like to ask about booking ${booking.bookingNumber} (${when}).`)}`} target="_blank" rel="noreferrer" className="btn btn-secondary !min-h-10 text-xs"><MessageCircle size={15} />{t("Contact on WhatsApp")}</a>}{booking.business.phone && <a href={`tel:${booking.business.phone}`} className="btn btn-ghost !min-h-10 text-xs"><Phone size={15} />{t("Call business")}</a>}</div></Card>
           <div className="rounded-2xl border border-[#dbeae4] bg-white p-4"><p className="flex items-center gap-2 text-xs font-bold text-[#234f49]"><Clock3 size={14} className="text-[#0b8661]" />{t("Keep this link")}</p><p className="mt-2 text-[11px] leading-5 text-[#6b817a]">{t("Bookmark this private page to check updates. Anyone with the link can view this booking, so do not share it publicly.")}</p><Button variant="secondary" className="mt-3 !min-h-9 w-full text-[11px]" onClick={() => void copyLink()} icon={<Copy size={13} />}>{copied ? t("Copied") : t("Copy private link")}</Button></div>
         </aside>
       </div>

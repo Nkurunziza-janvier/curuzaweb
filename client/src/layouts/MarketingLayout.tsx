@@ -1,31 +1,36 @@
-import { Menu, X } from "lucide-react";
+import { ArrowUpRight, Menu, X } from "lucide-react";
 import { useEffect, useState, type MouseEvent } from "react";
 import { Outlet, Link, useLocation, useNavigate } from "react-router";
-import { Brand, Button, ButtonLink } from "../components/ui";
+import { Brand } from "../components/ui";
 import { LanguageSwitcher, useLanguage } from "../i18n";
 
 const sectionLinks = [
-  { label: "Features", href: "/#features", section: "features" },
-  { label: "How It Works", href: "/#how-it-works", section: "how-it-works" },
-  { label: "About", href: "/#about", section: "about" },
-  { label: "Contact", href: "/#contact", section: "contact" },
+  { label: "Why a page", href: "/#platform", section: "platform" },
+  { label: "How it works", href: "/#how-it-works", section: "how-it-works" },
+  { label: "Pricing", href: "/#pricing", section: "pricing" },
+  { label: "FAQ", href: "/#faq", section: "faq" },
 ];
+
+const sectionIds = ["platform", "capabilities", "how-it-works", "industries", "pricing", "faq"];
 
 export default function MarketingLayout() {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState("home");
+  const [scrolled, setScrolled] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
-  const closeMenu = () => setOpen(false);
   const { t } = useLanguage();
+  const closeMenu = () => setOpen(false);
   const scrollBehavior = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
-  const goHome = () => {
+
+  const goHome = (event: MouseEvent<HTMLAnchorElement>) => {
     closeMenu();
-    if (location.pathname === "/") {
-      if (location.hash) navigate("/", { preventScrollReset: true });
-      window.scrollTo({ top: 0, behavior: scrollBehavior() });
-    }
+    if (location.pathname !== "/") return;
+    event.preventDefault();
+    if (location.hash) navigate("/", { preventScrollReset: true });
+    window.scrollTo({ top: 0, behavior: scrollBehavior() });
   };
+
   const goToSection = (section: string) => (event: MouseEvent<HTMLAnchorElement>) => {
     closeMenu();
     if (location.pathname !== "/") return;
@@ -34,8 +39,6 @@ export default function MarketingLayout() {
     window.requestAnimationFrame(() => document.getElementById(section)?.scrollIntoView({ behavior: scrollBehavior(), block: "start" }));
   };
 
-  // Route changes also reset scroll and support anchors when arriving from
-  // another page (for example, Pricing → Features).
   useEffect(() => {
     closeMenu();
     if (location.hash) {
@@ -56,19 +59,17 @@ export default function MarketingLayout() {
         if (timer) window.clearTimeout(timer);
       };
     }
-    if (location.pathname !== "/") window.scrollTo({ top: 0, behavior: scrollBehavior() });
+    window.scrollTo({ top: 0, behavior: scrollBehavior() });
     return undefined;
   }, [location.pathname, location.hash]);
 
-  // Keep the active navigation item in sync with the visible page section.
   useEffect(() => {
     if (location.pathname !== "/") {
       setActive(location.pathname === "/pricing" ? "pricing" : "");
       return;
     }
-    const sectionIds = ["features", "how-it-works", "about", "contact"];
     const updateActive = () => {
-      const marker = window.scrollY + Math.min(window.innerHeight * .34, 240);
+      const marker = window.scrollY + Math.min(window.innerHeight * 0.34, 240);
       let current = "home";
       for (const id of sectionIds) {
         const section = document.getElementById(id);
@@ -86,42 +87,50 @@ export default function MarketingLayout() {
   }, [location.pathname]);
 
   useEffect(() => {
+    const updateScrolled = () => setScrolled(window.scrollY > 8);
+    updateScrolled();
+    window.addEventListener("scroll", updateScrolled, { passive: true });
+    return () => window.removeEventListener("scroll", updateScrolled);
+  }, []);
+
+  useEffect(() => {
     if (!open) return;
-    const onKeyDown = (event: KeyboardEvent) => {
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") closeMenu();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [open]);
 
-  const navClass = (key: string) => `ref-nav-link text-sm font-semibold ${active === key ? "ref-nav-active text-[#075b43]" : "text-muted hover:text-ink"}`;
   return (
-    <div className="min-h-screen bg-cream">
-      <header className="ebiz-marketing-header sticky top-0 z-40 border-b border-line/70 bg-cream/90 backdrop-blur-xl">
-        <nav className="shell-wide marketing-nav flex h-16 items-center justify-between" aria-label="Main navigation">
+    <div className={`lp-marketing min-h-screen ${location.pathname === "/" ? "is-landing" : ""}`}>
+      <header className={`lp-header ${scrolled ? "is-scrolled" : ""}`}>
+        <nav className="lp-shell lp-nav" aria-label="Main navigation">
           <Brand onClick={goHome} />
-          <div className="ref-desktop-links hidden items-center gap-7 md:flex">
-            <Link to="/" onClick={goHome} className={navClass("home")} aria-current={active === "home" ? "page" : undefined}>{t("Home")}</Link>
-            {sectionLinks.slice(0, 2).map(({ label, href, section }) => <Link key={section} to={href} onClick={goToSection(section)} className={navClass(section)} aria-current={active === section ? "location" : undefined}>{t(label)}</Link>)}
-            <Link to="/pricing" className={navClass("pricing")} aria-current={active === "pricing" ? "page" : undefined}>{t("Pricing")}</Link>
-            {sectionLinks.slice(2).map(({ label, href, section }) => <Link key={section} to={href} onClick={goToSection(section)} className={navClass(section)} aria-current={active === section ? "location" : undefined}>{t(label)}</Link>)}
+          <div className="lp-nav-links">
+            {sectionLinks.map(({ label, href, section }) => <Link key={section} to={href} onClick={goToSection(section)} className={`lp-nav-link ${active === section ? "is-active" : ""}`} aria-current={active === section ? "location" : undefined}>{t(label)}</Link>)}
           </div>
-          <div className="ref-desktop-actions hidden items-center gap-2 md:flex">
+          <div className="lp-nav-actions">
             <LanguageSwitcher compact />
-            <ButtonLink to="/login" variant="ghost">{t("Log in")}</ButtonLink>
-            <ButtonLink to="/register">{t("Get started")} <span aria-hidden="true">→</span></ButtonLink>
+            <Link to="/login" className="lp-nav-login">{t("Log in")}</Link>
+            <Link to="/register" className="lp-nav-cta">{t("Create a page")} <ArrowUpRight size={14} aria-hidden="true" /></Link>
           </div>
-          <Button variant="ghost" className="ref-menu-toggle md:hidden" aria-label={open ? "Close navigation" : "Open navigation"} aria-expanded={open} aria-controls="marketing-mobile-nav" onClick={() => setOpen(!open)} icon={open ? <X /> : <Menu />} />
+          <button type="button" className="lp-menu-btn" aria-label={open ? t("Close navigation") : t("Open navigation")} aria-expanded={open} aria-controls="marketing-mobile-nav" onClick={() => setOpen(!open)}>
+            {open ? <X size={21} /> : <Menu size={21} />}
+          </button>
         </nav>
-        <div id="marketing-mobile-nav" hidden={!open} aria-label="Mobile navigation" className="ref-mobile-nav border-t border-line bg-cream p-4 shadow-card md:hidden"><div className="grid gap-2">
-          <LanguageSwitcher />
-          <ButtonLink to="/" variant={active === "home" ? "secondary" : "ghost"} onClick={goHome}>{t("Home")}</ButtonLink>
-          {sectionLinks.slice(0, 2).map(({ label, href, section }) => <ButtonLink key={section} to={href} variant={active === section ? "secondary" : "ghost"} onClick={goToSection(section)}>{t(label)}</ButtonLink>)}
-          <ButtonLink to="/pricing" variant={active === "pricing" ? "secondary" : "ghost"} onClick={closeMenu}>{t("Pricing")}</ButtonLink>
-          {sectionLinks.slice(2).map(({ label, href, section }) => <ButtonLink key={section} to={href} variant={active === section ? "secondary" : "ghost"} onClick={goToSection(section)}>{t(label)}</ButtonLink>)}
-          <ButtonLink to="/login" variant="secondary" onClick={closeMenu}>{t("Log in")}</ButtonLink>
-          <ButtonLink to="/register" onClick={closeMenu}>{t("Get started")}</ButtonLink>
-        </div></div>
+        {open && <div id="marketing-mobile-nav" className="lp-mobile-nav">
+          <div className="lp-shell">
+            <div className="lp-mobile-lang"><LanguageSwitcher /></div>
+            <nav aria-label="Mobile navigation" className="lp-mobile-links">
+              {sectionLinks.map(({ label, href, section }) => <Link key={section} to={href} onClick={goToSection(section)} className={active === section ? "is-active" : ""}>{t(label)} <ArrowUpRight size={15} aria-hidden="true" /></Link>)}
+            </nav>
+            <div className="lp-mobile-actions">
+              <Link to="/login" onClick={closeMenu} className="lp-button lp-button-ghost">{t("Log in")}</Link>
+              <Link to="/register" onClick={closeMenu} className="lp-button lp-button-primary">{t("Create a page")} <ArrowUpRight size={15} /></Link>
+            </div>
+          </div>
+        </div>}
       </header>
       <main><Outlet /></main>
     </div>

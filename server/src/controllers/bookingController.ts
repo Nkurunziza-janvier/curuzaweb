@@ -1,6 +1,7 @@
 import { BookingActor, BookingStatus, EventType, Prisma } from "@prisma/client";
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { prisma } from "../config/prisma.js";
+import { availableCapabilityKeys } from "../config/businessCatalog.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { AppError, badRequest, conflict, notFound, unauthorized } from "../utils/errors.js";
 import { success } from "../utils/responses.js";
@@ -13,6 +14,7 @@ import {
   type BookingServiceConfig,
 } from "../services/availability.js";
 import { addDateDays, dateKeyFor, zonedTimeToUtc } from "../services/timezone.js";
+import { generateReference } from "../utils/references.js";
 import {
   availabilityBlockSchema,
   availabilityWindowsSchema,
@@ -147,9 +149,11 @@ export const getPublicAvailability = asyncHandler(async (request, response) => {
   const input = publicAvailabilityQuerySchema.parse(request.query);
   const business = await prisma.business.findFirst({
     where: { slug: getParam(request, "slug"), isBlocked: false },
-    select: { id: true },
+    select: { id: true, isPublished: true, capabilities: true },
   });
-  if (!business) throw notFound("Business page not found");
+  if (!business?.isPublished) throw notFound("Business page not found");
+  const capabilities = new Set<string>(business.capabilities.length ? business.capabilities : availableCapabilityKeys);
+  if (!capabilities.has("appointments") || !capabilities.has("services")) throw badRequest("This business is not accepting online bookings right now.");
   const service = await loadBookingService(prisma, business.id, input.serviceId);
   const timezone = service.business.bookingSettings?.timezone ?? "Africa/Kigali";
   const today = dateKeyFor(new Date(), timezone);
@@ -175,18 +179,21 @@ export const createPublicBooking = asyncHandler(async (request, response) => {
   const input = createBookingSchema.parse(request.body);
   const business = await prisma.business.findFirst({
     where: { slug: getParam(request, "slug"), isBlocked: false },
-    select: { id: true },
+    select: { id: true, isPublished: true, capabilities: true },
   });
-  if (!business) throw notFound("Business page not found");
+  if (!business?.isPublished) throw notFound("Business page not found");
+  const capabilities = new Set<string>(business.capabilities.length ? business.capabilities : availableCapabilityKeys);
+  if (!capabilities.has("appointments") || !capabilities.has("services")) throw badRequest("This business is not accepting online bookings right now.");
 
   const created = await prisma.$transaction(async (transaction) => {
     await transaction.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${input.serviceId}))`;
     const slot = await assertSlotAvailable(transaction, business.id, input.serviceId, input.startAt);
     const status = slot.settings.requireConfirmation ? BookingStatus.PENDING : BookingStatus.CONFIRMED;
     const now = new Date();
+    const bookingNumber = generateReference("EB", 6);
     const booking = await transaction.booking.create({
       data: {
-        bookingNumber: `PENDING-${randomUUID()}`,
+        bookingNumber,
         publicToken: randomBytes(32).toString("base64url"),
         businessId: business.id,
         serviceId: slot.service.id,
@@ -204,7 +211,6 @@ export const createPublicBooking = asyncHandler(async (request, response) => {
         confirmedAt: status === BookingStatus.CONFIRMED ? now : null,
       },
     });
-    const bookingNumber = `BKG-${String(booking.sequence).padStart(6, "0")}`;
     await transaction.businessEvent.create({
       data: {
         businessId: business.id,
@@ -229,12 +235,11 @@ export const createPublicBooking = asyncHandler(async (request, response) => {
         title: status === BookingStatus.CONFIRMED ? `Booking confirmed: ${bookingNumber}` : `New booking request: ${bookingNumber}`,
         message: `${input.customerName} · ${slot.service.name} · ${slot.startAt.toISOString()}`,
         type: "BOOKING",
-        link: `/dashboard/bookings/${booking.id}`,
+        link: `/dashboard/bookings`,
       },
     });
-    return transaction.booking.update({
+    return transaction.booking.findUniqueOrThrow({
       where: { id: booking.id },
-      data: { bookingNumber },
       include: publicBookingInclude,
     });
   }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
@@ -289,7 +294,7 @@ export const cancelPublicBooking = asyncHandler(async (request, response) => {
       title: `Booking cancelled: ${booking.bookingNumber}`,
       message: `${booking.customerName} cancelled their appointment.`,
       type: "BOOKING",
-      link: `/dashboard/bookings/${booking.id}`,
+      link: `/dashboard/bookings`,
     },
   });
   const result = await prisma.booking.findUniqueOrThrow({ where: { id: booking.id }, include: publicBookingInclude });
@@ -332,7 +337,7 @@ export const createPublicBookingReview = asyncHandler(async (request, response) 
           title: `New verified review: ${input.rating}/5`,
           message: `${booking.customerName} reviewed ${booking.bookingNumber}.`,
           type: "REVIEW",
-          link: `/dashboard/bookings/${booking.id}`,
+          link: `/dashboard/bookings`,
         },
       });
       return created;

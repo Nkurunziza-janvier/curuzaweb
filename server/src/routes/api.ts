@@ -8,19 +8,25 @@ import * as admin from "../controllers/adminController.js";
 import * as billing from "../controllers/billingController.js";
 import * as booking from "../controllers/bookingController.js";
 import * as business from "../controllers/businessController.js";
+import * as customer from "../controllers/customerController.js";
+import * as dashboard from "../controllers/dashboardController.js";
+import * as order from "../controllers/orderController.js";
 import * as quote from "../controllers/quoteController.js";
 import * as request from "../controllers/requestController.js";
 import { authenticate, requireAdmin, requireBusinessOwner } from "../middleware/auth.js";
 import { requireOwnedBusiness } from "../middleware/ownership.js";
 import { requireOwnedResource } from "../middleware/resourceOwnership.js";
 import { validate } from "../middleware/validate.js";
-import { adminBusinessUpdateSchema, businessIdParamSchema, idParamSchema, loginSchema, publicBookingTokenParamSchema, publicQuoteTokenParamSchema, registerSchema, requestIdParamSchema, requestNumberParamSchema, requestStatusQuerySchema, slugParamSchema } from "../validators/schemas.js";
+import { adminBusinessUpdateSchema, businessIdParamSchema, idParamSchema, loginSchema, orderPaymentParamSchema, paymentReferenceParamSchema, publicBookingTokenParamSchema, publicOrderTokenParamSchema, publicQuoteTokenParamSchema, registerSchema, requestIdParamSchema, requestNumberParamSchema, requestStatusQuerySchema, reviewPublishSchema, slugParamSchema } from "../validators/schemas.js";
 
 const router = Router();
 const rateLimitHandler = (_request: import("express").Request, response: import("express").Response) =>
   response.status(429).json({ success: false, error: { code: "RATE_LIMITED", message: "Too many requests. Please try again later." } });
 const publicRequestLimit = rateLimit({ windowMs: 15 * 60 * 1000, limit: 15, standardHeaders: "draft-8", legacyHeaders: false, handler: rateLimitHandler });
 const publicBookingLimit = rateLimit({ windowMs: 15 * 60 * 1000, limit: 12, standardHeaders: "draft-8", legacyHeaders: false, handler: rateLimitHandler });
+const publicOrderLimit = rateLimit({ windowMs: 15 * 60 * 1000, limit: 15, standardHeaders: "draft-8", legacyHeaders: false, handler: rateLimitHandler });
+const publicPaymentLimit = rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: "draft-8", legacyHeaders: false, handler: rateLimitHandler });
+const authLimit = rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardHeaders: "draft-8", legacyHeaders: false, handler: rateLimitHandler });
 const publicAvailabilityLimit = rateLimit({ windowMs: 60 * 1000, limit: 120, standardHeaders: "draft-8", legacyHeaders: false, handler: rateLimitHandler });
 const publicEventLimit = rateLimit({ windowMs: 60 * 1000, limit: 60, standardHeaders: "draft-8", legacyHeaders: false, handler: rateLimitHandler });
 const uploadLimit = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: "draft-8", legacyHeaders: false, handler: rateLimitHandler });
@@ -35,13 +41,14 @@ const upload = multer({
 
 router.get("/health", (_request, response) => response.json({ success: true, data: { status: "ok" } }));
 
-router.post("/auth/register", validate(registerSchema), auth.register);
-router.post("/auth/login", validate(loginSchema), auth.login);
+router.post("/auth/register", authLimit, validate(registerSchema), auth.register);
+router.post("/auth/login", authLimit, validate(loginSchema), auth.login);
 router.get("/auth/me", authenticate, auth.me);
 router.get("/notifications", authenticate, billing.getNotifications);
 router.patch("/notifications/read", authenticate, billing.markNotificationsRead);
 
-router.post("/uploads", uploadLimit, upload.single("file"), business.uploadFile);
+router.post("/uploads", authenticate, requireBusinessOwner, uploadLimit, upload.single("file"), business.uploadFile);
+router.get("/public/business-catalog", business.getBusinessCatalog);
 router.get("/public/businesses", business.listPublicBusinesses);
 router.get("/public/businesses/:slug/brand", validate(slugParamSchema, "params"), business.getPublicBusinessBrand);
 router.get("/public/businesses/:slug/request-template", validate(slugParamSchema, "params"), business.getRequestTemplate);
@@ -60,6 +67,11 @@ router.post("/public/quotes/:publicToken/messages", publicEventLimit, validate(p
 router.get("/public/bookings/:publicToken", publicEventLimit, validate(publicBookingTokenParamSchema, "params"), booking.getPublicBooking);
 router.post("/public/bookings/:publicToken/cancel", publicEventLimit, validate(publicBookingTokenParamSchema, "params"), booking.cancelPublicBooking);
 router.post("/public/bookings/:publicToken/reviews", publicEventLimit, validate(publicBookingTokenParamSchema, "params"), booking.createPublicBookingReview);
+router.post("/public/businesses/:slug/orders", publicOrderLimit, validate(slugParamSchema, "params"), order.createPublicOrder);
+router.get("/public/orders/:publicToken", publicEventLimit, validate(publicOrderTokenParamSchema, "params"), order.getPublicOrder);
+router.post("/public/orders/:publicToken/cancel", publicEventLimit, validate(publicOrderTokenParamSchema, "params"), order.cancelPublicOrder);
+router.post("/public/orders/:publicToken/payments", publicPaymentLimit, validate(publicOrderTokenParamSchema, "params"), order.initiatePublicOrderPayment);
+router.post("/public/payments/:reference/confirm", publicPaymentLimit, validate(paymentReferenceParamSchema, "params"), order.confirmPublicOrderPayment);
 
 router.use(authenticate, requireBusinessOwner);
 router.get("/billing", billing.getBilling);
@@ -68,6 +80,11 @@ router.post("/billing/payments", billing.submitPayment);
 router.get("/businesses", business.listBusinesses);
 router.post("/businesses", business.createBusiness);
 router.get("/businesses/:businessId", validate(businessIdParamSchema, "params"), requireOwnedBusiness, business.getBusiness);
+router.get("/businesses/:businessId/profile-completion", validate(businessIdParamSchema, "params"), requireOwnedBusiness, business.getProfileCompletion);
+router.get("/businesses/:businessId/workspace-summary", validate(businessIdParamSchema, "params"), requireOwnedBusiness, dashboard.getWorkspaceSummary);
+router.get("/businesses/:businessId/customers", validate(businessIdParamSchema, "params"), requireOwnedBusiness, customer.listBusinessCustomers);
+router.get("/businesses/:businessId/reviews", validate(businessIdParamSchema, "params"), requireOwnedBusiness, customer.listBusinessReviews);
+router.patch("/reviews/:id", validate(idParamSchema, "params"), requireOwnedResource("review"), validate(reviewPublishSchema), customer.setReviewPublished);
 router.patch("/businesses/:businessId", validate(businessIdParamSchema, "params"), requireOwnedBusiness, business.updateBusiness);
 router.delete("/businesses/:businessId", validate(businessIdParamSchema, "params"), requireOwnedBusiness, business.deleteBusiness);
 router.post("/businesses/:businessId/publish", validate(businessIdParamSchema, "params"), requireOwnedBusiness, (request, response, next) => { request.params.state = "publish"; next(); }, business.setBusinessPublished);
@@ -103,6 +120,13 @@ router.get("/bookings/:id", validate(idParamSchema, "params"), requireOwnedResou
 router.patch("/bookings/:id/status", validate(idParamSchema, "params"), requireOwnedResource("booking"), booking.updateBookingStatus);
 router.patch("/bookings/:id/schedule", validate(idParamSchema, "params"), requireOwnedResource("booking"), booking.rescheduleBooking);
 router.patch("/bookings/:id/note", validate(idParamSchema, "params"), requireOwnedResource("booking"), booking.updateBookingNote);
+
+router.get("/businesses/:businessId/orders/summary", validate(businessIdParamSchema, "params"), requireOwnedBusiness, order.getOrderSummary);
+router.get("/businesses/:businessId/orders", validate(businessIdParamSchema, "params"), requireOwnedBusiness, order.listBusinessOrders);
+router.get("/orders/:id", validate(idParamSchema, "params"), requireOwnedResource("order"), order.getBusinessOrder);
+router.patch("/orders/:id/status", validate(idParamSchema, "params"), requireOwnedResource("order"), order.updateOrderStatus);
+router.post("/orders/:id/mark-paid", validate(idParamSchema, "params"), requireOwnedResource("order"), order.markOrderPaid);
+router.patch("/orders/:orderId/payments/:paymentId", validate(orderPaymentParamSchema, "params"), requireOwnedResource("order"), order.reviewOrderPayment);
 
 router.get("/businesses/:businessId/offers", validate(businessIdParamSchema, "params"), requireOwnedBusiness, business.listOffers);
 router.post("/businesses/:businessId/offers", validate(businessIdParamSchema, "params"), requireOwnedBusiness, business.createOffer);

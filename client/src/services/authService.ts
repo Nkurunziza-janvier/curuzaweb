@@ -12,6 +12,13 @@ export interface AuthUser {
     name: string;
     slug: string;
     category: string;
+    industryKey: string;
+    subtype: string;
+    capabilities: string[];
+    currency: string;
+    onboardingStep: number;
+    onboardingCompletedAt: string | null;
+    publishedAt: string | null;
     isPublished: boolean;
     canPublishProducts: boolean;
     productAccessExpiresAt: string | null;
@@ -31,7 +38,7 @@ export const authService = {
     window.sessionStorage.setItem(tokenKey, result.token);
     return result.user;
   },
-  async register(input: { name: string; email: string; password: string; businessName: string; category?: string }) {
+  async register(input: { name: string; email: string; password: string; businessName: string; category?: string; industryKey?: string; subtype?: string; phone?: string; whatsapp?: string; description?: string; city?: string; address?: string }) {
     const result = await api.post<AuthResult>("/auth/register", input);
     window.sessionStorage.setItem(tokenKey, result.token);
     return result.user;

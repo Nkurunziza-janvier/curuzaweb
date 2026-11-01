@@ -1,9 +1,12 @@
-import { ArrowRight, BarChart3, Building2, Check, Eye, EyeOff, Globe2, LockKeyhole, Mail, Package, ShieldCheck, Sparkles, Store, UserRound, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, BarChart3, Building2, Check, Eye, EyeOff, Globe2, LockKeyhole, Mail, MapPin, Package, Search, ShieldCheck, Sparkles, Store, UserRound, Users } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { Brand, Button, Input, Label } from "../components/ui";
 import { authService } from "../services/authService";
+import { businessService } from "../services/api";
+import { useBusinessCatalog } from "../hooks/apiHooks";
+import type { BusinessCatalog } from "../types/business";
 import BrandLoader from "../components/BrandLoader";
 import { LanguageSwitcher, useLanguage } from "../i18n";
 
@@ -103,15 +106,51 @@ export function AuthPage({ register = false }: { register?: boolean }) {
   const [error, setError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [recoveryNotice, setRecoveryNotice] = useState(false);
-  const [values, setValues] = useState({ name: "", email: "", password: "", businessName: "" });
+  const [registerStep, setRegisterStep] = useState(0);
+  const [industryKey, setIndustryKey] = useState("");
+  const [subtype, setSubtype] = useState("");
+  const [typeSearch, setTypeSearch] = useState("");
+  const [values, setValues] = useState({ name: "", email: "", password: "", businessName: "", phone: "", whatsapp: "", description: "", city: "", address: "" });
+  const catalogQuery = useBusinessCatalog<BusinessCatalog>();
+  const catalog = catalogQuery.data;
+  const selectedIndustry = catalog?.industries.find((item) => item.key === industryKey);
+  const visibleIndustries = (catalog?.industries ?? []).filter((item) => {
+    const term = typeSearch.trim().toLowerCase();
+    return !term || `${item.label} ${item.description} ${item.examples}`.toLowerCase().includes(term);
+  });
+  const contactMissing = !values.phone.trim() && !values.whatsapp.trim();
+
   const submit = (e: FormEvent) => {
     e.preventDefault();
     setError("");
     setRecoveryNotice(false);
+    if (register && !industryKey) {
+      setError("Choose your business type before continuing.");
+      setRegisterStep(0);
+      return;
+    }
+    if (register && contactMissing) {
+      setError("Add a business phone number or WhatsApp number so customers can reach you.");
+      return;
+    }
     setLoading(true);
     const loadingStartedAt = Date.now();
+    const selectedSubtype = selectedIndustry?.subtypes.find((item) => item.key === subtype);
     const action = register
-      ? authService.register(values)
+      ? authService.register({
+        name: values.name,
+        email: values.email,
+        password: values.password,
+        businessName: values.businessName,
+        industryKey,
+        subtype: industryKey === "other" ? subtype.trim() : subtype,
+        category: industryKey === "other" ? subtype.trim() || "Other" : selectedSubtype?.label ?? selectedIndustry?.label,
+        phone: values.phone.trim() || undefined,
+        whatsapp: values.whatsapp.trim() || undefined,
+        description: values.description.trim() || undefined,
+        city: values.city.trim() || undefined,
+        address: values.address.trim() || undefined,
+      })
       : authService.signIn(values.email, values.password);
     void action
       .then(async (user) => {
@@ -119,12 +158,32 @@ export function AuthPage({ register = false }: { register?: boolean }) {
           const remainingLoadingTime = Math.max(0, 7000 - (Date.now() - loadingStartedAt));
           if (remainingLoadingTime > 0) await new Promise((resolve) => window.setTimeout(resolve, remainingLoadingTime));
         }
+        let published = false;
+        if (register && user.business) {
+          try {
+            await businessService.publish(user.business.id, true);
+            published = true;
+            user.business.isPublished = true;
+            user.business.publishedAt = new Date().toISOString();
+          } catch {
+            published = false;
+          }
+        }
         queryClient.setQueryData(["auth", "me"], user);
         const destination = (location.state as { from?: string } | null)?.from;
-        navigate(register ? "/onboarding" : destination ?? (user.role === "ADMIN" ? "/admin" : "/dashboard"), { replace: true });
+        navigate(register ? "/dashboard" : destination ?? (user.role === "ADMIN" ? "/admin" : "/dashboard"), {
+          replace: true,
+          state: register ? { registered: true, published } : undefined,
+        });
       })
-      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Unable to sign in"))
+      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : register ? "Unable to create your business" : "Unable to sign in"))
       .finally(() => setLoading(false));
+  };
+
+  const chooseIndustry = (key: string, firstSubtype?: string) => {
+    setIndustryKey(key);
+    setSubtype(key === "other" ? "" : firstSubtype ?? "");
+    setError("");
   };
 
   if (!register) {
@@ -187,11 +246,27 @@ export function AuthPage({ register = false }: { register?: boolean }) {
       </header>
       <div className="register-main">
         <div className="register-heading">
-          <span className="register-step"><span className="register-step-number">01</span> {t("CREATE YOUR ACCOUNT")}<i aria-hidden="true" />{t("Step 1 of 3")}</span>
-          <h1>{t("Put your business")}<br /><em>{t("on the map.")}</em></h1>
-          <p>{t("Start with the essentials. We’ll help you build your business page next.")}</p>
+          <span className="register-step"><span className="register-step-number">{registerStep === 0 ? "01" : "02"}</span> {registerStep === 0 ? t("CHOOSE YOUR BUSINESS TYPE") : t("CREATE YOUR BUSINESS PAGE")}<i aria-hidden="true" />{registerStep === 0 ? t("Step 1 of 2") : t("Step 2 of 2")}</span>
+          <h1>{registerStep === 0 ? <>{t("What type of")}<br /><em>{t("business do you have?")}</em></> : <>{t("Put your business")}<br /><em>{t("on the map.")}</em></>}</h1>
+          <p>{registerStep === 0 ? t("Pick the closest match. We’ll prepare the right dashboard and page for you.") : t("Only the essentials. Everything else can be added later from your dashboard.")}</p>
         </div>
-        <form className="register-form" onSubmit={submit}>
+
+        {registerStep === 0 ? <div className="register-form">
+          <div className="relative"><Search size={17} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" aria-hidden="true" /><Input aria-label={t("Search business types")} className="pl-10" value={typeSearch} onChange={(event) => setTypeSearch(event.target.value)} placeholder={t("Search business types")} /></div>
+          <div className="mt-4 grid max-h-[24rem] gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+            {catalogQuery.isLoading && <p className="text-sm text-muted">{t("Loading business types…")}</p>}
+            {catalogQuery.isError && <div className="sm:col-span-2"><p role="alert" className="text-sm text-coral-dark">{t("Business types could not be loaded.")}</p><button type="button" className="mt-2 text-sm font-bold text-coral-dark underline" onClick={() => void catalogQuery.refetch()}>{t("Try again")}</button></div>}
+            {visibleIndustries.map((item) => <button key={item.key} type="button" aria-pressed={industryKey === item.key} onClick={() => chooseIndustry(item.key, item.subtypes[0]?.key)} className={`flex items-start justify-between gap-3 rounded-2xl border p-3.5 text-left transition ${industryKey === item.key ? "border-violet bg-violet-soft/40" : "border-line bg-white hover:border-violet"}`}><span><span className="block text-sm font-bold">{item.label}</span><span className="mt-1 block text-xs leading-5 text-muted">{item.examples}</span></span>{industryKey === item.key && <Check size={17} className="mt-0.5 shrink-0 text-violet" />}</button>)}
+            {!catalogQuery.isLoading && !catalogQuery.isError && !visibleIndustries.length && <p className="text-sm text-muted sm:col-span-2">{t("No business types match your search.")}</p>}
+          </div>
+          {selectedIndustry && <div className="mt-5 rounded-2xl border border-line bg-[#faf9f6] p-4">
+            <p className="text-sm font-bold">{t("Choose a subtype")}</p>
+            {industryKey === "other" ? <div className="mt-3"><Label htmlFor="custom-business-type">{t("Your business type")}</Label><Input id="custom-business-type" value={subtype} onChange={(event) => setSubtype(event.target.value)} maxLength={80} placeholder={t("e.g. Print studio")} /></div> : <div className="mt-3 flex flex-wrap gap-2">{selectedIndustry.subtypes.map((item) => <button key={item.key} type="button" aria-pressed={subtype === item.key} onClick={() => setSubtype(item.key)} className={`rounded-full border px-3 py-2 text-sm font-semibold transition ${subtype === item.key ? "border-violet bg-violet text-white" : "border-line bg-white text-ink hover:border-violet"}`}>{item.label}</button>)}</div>}
+          </div>}
+          {error && <p role="alert" className="register-error">{error}</p>}
+          <Button type="button" className="register-submit" disabled={!industryKey || !subtype.trim()} onClick={() => setRegisterStep(1)}>{t("Continue")} <ArrowRight size={18} /></Button>
+          <p className="register-terms"><ShieldCheck size={16} /> {t("You can add products, services, photos and opening hours after registration.")}</p>
+        </div> : <form className="register-form" onSubmit={submit}>
           <div className="register-form-grid">
             <div><Label htmlFor="business">{t("Business name")}</Label><div className="register-input-wrap"><Building2 size={17} aria-hidden="true" /><Input id="business" required autoComplete="organization" value={values.businessName} onChange={(event) => setValues({ ...values, businessName: event.target.value })} placeholder={t("e.g. Imizi Home")} /></div></div>
             <div><Label htmlFor="owner">{t("Your full name")}</Label><div className="register-input-wrap"><UserRound size={17} aria-hidden="true" /><Input id="owner" required autoComplete="name" value={values.name} onChange={(event) => setValues({ ...values, name: event.target.value })} placeholder={t("e.g. Aline Uwimana")} /></div></div>
@@ -199,17 +274,27 @@ export function AuthPage({ register = false }: { register?: boolean }) {
             <div className="register-field-wide"><div className="mb-2 flex items-center justify-between"><Label htmlFor="register-password">{t("Create a password")}</Label><span className="register-hint">{t("8 characters minimum")}</span></div><div className="register-input-wrap"><LockKeyhole size={17} aria-hidden="true" /><Input id="register-password" required minLength={8} autoComplete="new-password" type={showPassword ? "text" : "password"} value={values.password} onChange={(event) => setValues({ ...values, password: event.target.value })} placeholder={t("Choose a secure password")} /><button type="button" className="register-password-toggle" aria-label={showPassword ? t("Hide password") : t("Show password")} aria-pressed={showPassword} onClick={() => setShowPassword(!showPassword)}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>
               {values.password && <div className="register-strength" data-level={passwordStrength}><span className="register-strength-bars" aria-hidden="true"><i /><i /><i /><i /></span><small aria-live="polite">{strengthLabels[passwordStrength - 1]}</small></div>}
             </div>
+            <div><Label htmlFor="register-phone">{t("Business phone")}</Label><Input id="register-phone" type="tel" autoComplete="tel" value={values.phone} onChange={(event) => setValues({ ...values, phone: event.target.value })} placeholder="+250 78..." /></div>
+            <div><Label htmlFor="register-whatsapp">{t("WhatsApp number")}</Label><Input id="register-whatsapp" type="tel" value={values.whatsapp} onChange={(event) => setValues({ ...values, whatsapp: event.target.value })} placeholder="+250 78..." /></div>
+            <p className="register-field-wide -mt-2 text-xs text-muted">{t("Add at least one number customers can use. Your account email stays private.")}</p>
+            <div className="register-field-wide"><Label htmlFor="register-description">{t("Short description (optional)")}</Label><Input id="register-description" value={values.description} onChange={(event) => setValues({ ...values, description: event.target.value })} maxLength={500} placeholder={t("One or two lines about what you offer")} /></div>
+            <div><Label htmlFor="register-city">{t("City or service area (optional)")}</Label><div className="register-input-wrap"><MapPin size={17} aria-hidden="true" /><Input id="register-city" value={values.city} onChange={(event) => setValues({ ...values, city: event.target.value })} placeholder={t("e.g. Kigali")} /></div></div>
+            <div><Label htmlFor="register-address">{t("Address (optional)")}</Label><Input id="register-address" value={values.address} onChange={(event) => setValues({ ...values, address: event.target.value })} placeholder={t("Street, building or landmark")} /></div>
+            <p className="register-field-wide -mt-2 text-xs text-muted">{t("Leave location blank if you serve customers online or travel to them.")}</p>
           </div>
           {error && <p role="alert" className="register-error">{error}</p>}
-          <Button type="submit" loading={loading} className="register-submit">{loading ? t("Creating your account…") : t("Create your account")} {!loading && <ArrowRight size={18} />}</Button>
+          <div className="flex gap-2">
+            <Button type="button" variant="secondary" onClick={() => { setError(""); setRegisterStep(0); }} icon={<ArrowLeft size={17} />}>{t("Back")}</Button>
+            <Button type="submit" loading={loading} disabled={loading || contactMissing} className="register-submit flex-1">{loading ? t("Creating your page…") : t("Create my business page")} {!loading && <ArrowRight size={18} />}</Button>
+          </div>
           <p className="register-terms"><ShieldCheck size={16} /> {t("Your details are protected. By continuing, you agree to our Terms and Privacy Policy.")}</p>
-        </form>
+        </form>}
+
         <div className="register-next">
           <p>{t("What happens next")}</p>
           <ol>
-            <li><span>01</span><div><b>{t("Create your account")}</b><small>{t("Your secure workspace is ready instantly.")}</small></div></li>
-            <li><span>02</span><div><b>{t("Build your page")}</b><small>{t("Add products, services and opening hours.")}</small></div></li>
-            <li><span>03</span><div><b>{t("Get discovered")}</b><small>{t("Share one link with every customer.")}</small></div></li>
+            <li><span>01</span><div><b>{t("Your page is created")}</b><small>{t("We use your business name, type and contact details.")}</small></div></li>
+            <li><span>02</span><div><b>{t("Make it yours")}</b><small>{t("Add products, services, photos and hours whenever you are ready.")}</small></div></li>
           </ol>
         </div>
       </div>

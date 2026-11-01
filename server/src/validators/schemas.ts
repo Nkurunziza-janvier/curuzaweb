@@ -1,10 +1,13 @@
-import { BookingStatus, DiscountType, EventType, QuestionType, RequestStatus } from "@prisma/client";
+import { BookingStatus, DiscountType, EventType, FulfillmentType, OrderPaymentStatus, OrderStatus, PaymentProvider, PaymentRecordStatus, QuestionType, RequestStatus } from "@prisma/client";
 import { z } from "zod";
+import { availableCapabilityKeys, businessIndustries } from "../config/businessCatalog.js";
 
 const imageUrlSchema = z.union([
   z.url(),
   z.string().regex(/^\/uploads\/[A-Za-z0-9._-]+$/),
 ]).nullable().optional();
+
+const industryKeys = businessIndustries.map((industry) => industry.key) as [string, ...string[]];
 
 export const registerSchema = z.object({
   name: z.string().trim().min(2).max(100),
@@ -12,9 +15,21 @@ export const registerSchema = z.object({
   password: z.string().min(8).max(128),
   businessName: z.string().trim().min(2).max(120),
   category: z.string().trim().max(80).optional(),
+  industryKey: z.enum(industryKeys).optional(),
+  subtype: z.string().trim().min(1).max(80).optional(),
+  phone: z.string().trim().max(30).optional(),
+  whatsapp: z.string().trim().max(30).optional(),
+  description: z.string().trim().max(500).optional(),
+  city: z.string().trim().max(100).optional(),
+  address: z.string().trim().max(200).optional(),
+}).refine((data) => Boolean(data.phone || data.whatsapp), {
+  message: "Add a business phone or WhatsApp number",
+  path: ["phone"],
 });
 
 export const loginSchema = z.object({ email: z.email(), password: z.string().min(1).max(128) });
+
+const optionalUrlSchema = z.union([z.url(), z.literal("")]).nullable().optional();
 
 export const businessSchema = z.object({
   name: z.string().trim().min(2).max(120).optional(),
@@ -22,6 +37,14 @@ export const businessSchema = z.object({
   tagline: z.string().trim().max(180).optional(),
   highlights: z.array(z.string().trim().min(1).max(100)).max(8).optional(),
   category: z.string().trim().max(80).optional(),
+  industryKey: z.enum(industryKeys).optional(),
+  subtype: z.string().trim().min(1).max(80).optional(),
+  capabilities: z.array(z.enum(availableCapabilityKeys)).min(1).max(20).optional(),
+  profileData: z.record(z.string(), z.unknown()).nullable().optional(),
+  websiteUrl: optionalUrlSchema,
+  socialLinks: z.record(z.string(), z.string().max(300)).nullable().optional(),
+  preferredLanguage: z.string().trim().min(2).max(10).optional(),
+  currency: z.string().trim().length(3).optional(),
   logoUrl: imageUrlSchema,
   coverImageUrl: imageUrlSchema,
   phone: z.string().max(40).nullable().optional(),
@@ -33,9 +56,12 @@ export const businessSchema = z.object({
   latitude: z.number().min(-90).max(90).nullable().optional(),
   longitude: z.number().min(-180).max(180).nullable().optional(),
   openingHours: z.record(z.string(), z.unknown()).nullable().optional(),
-  // 13 marks completion after the final publish step in the onboarding flow.
-  onboardingStep: z.number().int().min(0).max(13).optional(),
+  // The new onboarding flow has six steps. The larger cap keeps legacy progress values valid.
+  onboardingStep: z.number().int().min(0).max(20).optional(),
+  confirmCapabilityChanges: z.boolean().optional(),
 });
+
+export const reviewPublishSchema = z.object({ isPublished: z.boolean() });
 
 export const adminBusinessUpdateSchema = z.object({
   isPublished: z.boolean().optional(),
@@ -181,24 +207,30 @@ export const quoteUpdateSchema = z.object({
   }
 });
 export const messageSchema = z.object({ message: z.string().trim().min(1).max(2000) });
+const serverRecordedEvents: EventType[] = [
+  EventType.PAGE_VIEW,
+  EventType.QUOTE_REQUEST,
+  EventType.QUOTE_ACCEPTED,
+  EventType.QUOTE_REJECTED,
+  EventType.QUOTE_CREATED,
+  EventType.QUOTE_SENT,
+  EventType.QUOTE_VIEWED,
+  EventType.QUOTE_CHANGE_REQUESTED,
+  EventType.QUOTE_EXPIRED,
+  EventType.BOOKING_CREATED,
+  EventType.BOOKING_CONFIRMED,
+  EventType.BOOKING_RESCHEDULED,
+  EventType.BOOKING_CANCELLED,
+  EventType.BOOKING_COMPLETED,
+  EventType.REVIEW_SUBMITTED,
+  EventType.ORDER_CREATED,
+  EventType.ORDER_CONFIRMED,
+  EventType.ORDER_COMPLETED,
+  EventType.ORDER_CANCELLED,
+  EventType.PAYMENT_RECEIVED,
+];
 export const eventSchema = z.object({
-  eventType: z.nativeEnum(EventType).refine((type) =>
-    type !== EventType.PAGE_VIEW &&
-    type !== EventType.QUOTE_REQUEST &&
-    type !== EventType.QUOTE_ACCEPTED &&
-    type !== EventType.QUOTE_REJECTED &&
-    type !== EventType.QUOTE_CREATED &&
-    type !== EventType.QUOTE_SENT &&
-    type !== EventType.QUOTE_VIEWED &&
-    type !== EventType.QUOTE_CHANGE_REQUESTED &&
-    type !== EventType.QUOTE_EXPIRED &&
-    type !== EventType.BOOKING_CREATED &&
-    type !== EventType.BOOKING_CONFIRMED &&
-    type !== EventType.BOOKING_RESCHEDULED &&
-    type !== EventType.BOOKING_CANCELLED &&
-    type !== EventType.BOOKING_COMPLETED &&
-    type !== EventType.REVIEW_SUBMITTED,
-  "This event is recorded by the server"),
+  eventType: z.nativeEnum(EventType).refine((type) => !serverRecordedEvents.includes(type), "This event is recorded by the server"),
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 export const idParamSchema = z.object({ id: z.string().uuid() });
@@ -288,3 +320,41 @@ export const bookingListQuerySchema = z.object({
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   search: z.string().trim().max(120).optional(),
 });
+
+export const createOrderSchema = z.object({
+  items: z.array(z.object({
+    productId: z.uuid(),
+    quantity: z.coerce.number().int().min(1).max(1000),
+  })).min(1).max(50),
+  customerName: z.string().trim().min(2).max(120),
+  customerPhone: z.string().trim().max(40).optional().or(z.literal("")),
+  customerEmail: z.email().optional().or(z.literal("")),
+  customerNote: z.string().max(2000).optional().default(""),
+  fulfillment: z.nativeEnum(FulfillmentType).default(FulfillmentType.PICKUP),
+  deliveryAddress: z.string().trim().max(300).optional().or(z.literal("")),
+}).refine((input) => Boolean(input.customerPhone?.trim() || input.customerEmail?.trim()), {
+  path: ["customerPhone"],
+  message: "Provide a phone number or email address so the business can contact you",
+}).refine((input) => input.fulfillment !== FulfillmentType.DELIVERY || Boolean(input.deliveryAddress?.trim()), {
+  path: ["deliveryAddress"],
+  message: "Add the delivery address so the business knows where to bring your order",
+});
+
+export const orderStatusSchema = z.object({ status: z.nativeEnum(OrderStatus) });
+export const orderListQuerySchema = z.object({
+  status: z.nativeEnum(OrderStatus).optional(),
+  paymentStatus: z.nativeEnum(OrderPaymentStatus).optional(),
+  search: z.string().trim().max(120).optional(),
+});
+export const orderPaymentInitSchema = z.object({
+  provider: z.enum([PaymentProvider.MOBILE_MONEY, PaymentProvider.CARD]),
+  payerPhone: z.string().trim().min(9).max(30).optional(),
+}).refine((input) => input.provider !== PaymentProvider.MOBILE_MONEY || Boolean(input.payerPhone?.trim()), {
+  path: ["payerPhone"],
+  message: "Enter the mobile money number that will pay for this order",
+});
+export const orderPaymentConfirmSchema = z.object({ reference: z.string().regex(/^PAY-[A-Z0-9]{6,20}$/) });
+export const orderPaymentReviewSchema = z.object({ status: z.enum([PaymentRecordStatus.PAID, PaymentRecordStatus.FAILED, PaymentRecordStatus.REFUNDED]), note: z.string().max(500).optional() });
+export const publicOrderTokenParamSchema = z.object({ publicToken: z.string().regex(/^[A-Za-z0-9_-]{32,100}$/) });
+export const paymentReferenceParamSchema = z.object({ reference: z.string().regex(/^PAY-[A-Z0-9]{6,20}$/) });
+export const orderPaymentParamSchema = z.object({ orderId: z.uuid(), paymentId: z.uuid() });

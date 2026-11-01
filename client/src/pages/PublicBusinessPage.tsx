@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router";
 import { analyticsService, businessService } from "../services/api";
 import { usePublicBusiness } from "../hooks/apiHooks";
+import { useDocumentMeta } from "../hooks/useDocumentMeta";
 import { ButtonLink, Card, Heading } from "../components/ui";
 import BrandLoader from "../components/BrandLoader";
 import BusinessStorefront from "./BusinessStorefront";
@@ -16,6 +17,9 @@ export interface PublicBookingSettings { isEnabled: boolean; timezone: string; s
 export interface PublicAvailabilityWindow { weekday: number; startMinute: number; endMinute: number; }
 export interface PublicBusiness {
   id: string; slug: string; name: string; tagline: string; description: string; category: string; highlights: string[];
+  industryKey?: string; subtype?: string; capabilities?: string[]; profileData?: Record<string, unknown> | null;
+  profileDetails?: Array<{ key: string; label: string; value: string }>;
+  websiteUrl?: string | null; socialLinks?: Record<string, string> | null; preferredLanguage?: string; currency?: string;
   logoUrl: string | null; coverImageUrl: string | null; phone: string | null; whatsapp: string | null; email: string | null;
   address: string | null; city: string | null; country: string; latitude: number | null; longitude: number | null;
   openingHours: { display?: string } | null; rating: number; reviewCount: number; stats: { pageViews: number; customerRequests: number; bookings?: number };
@@ -53,6 +57,11 @@ export default function PublicBusinessPage() {
   const cartCount = cartItems.reduce((total, item) => total + item.quantity, 0);
   const cartTotal = cartItems.reduce((total, item) => total + Number(item.price) * item.quantity, 0);
   const changeCartQuantity = (id: string, amount: number) => setCart((current) => ({ ...current, [id]: Math.max(0, (current[id] ?? 0) + amount) }));
+  useDocumentMeta({
+    title: business ? `${business.name}${business.city ? ` · ${business.city}` : ""} · e-businessRw` : "e-businessRw",
+    description: business?.tagline || business?.description,
+    image: business?.coverImageUrl ?? business?.logoUrl,
+  });
 
   if (isLoading || minimumLoadingSlug !== businessSlug) {
     const businessName = business?.name ?? brand?.name;
@@ -68,7 +77,9 @@ export default function PublicBusinessPage() {
   };
   const sendOrderRequest = () => {
     if (!cartItems.length) return;
-    navigate(`/b/${business.slug}/request`, { state: { orderItems: cartItems.map(({ id, name, quantity, price, currency }) => ({ id, name, quantity, unitPrice: Number(price), currency })) } });
+    const items = cartItems.map(({ id, name, quantity, price, currency, imageUrl }) => ({ productId: id, name, quantity, unitPrice: Number(price), currency, imageUrl }));
+    window.sessionStorage.setItem(`ebiz_order_cart_${business.slug}`, JSON.stringify(items));
+    navigate(`/b/${business.slug}/order`, { state: { items } });
     setCartOpen(false);
   };
   const phoneLink = business.phone ? `tel:${business.phone}` : undefined;

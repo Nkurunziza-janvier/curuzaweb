@@ -66,12 +66,53 @@ enum DiscountType {
   FIXED
 }
 
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  READY
+  COMPLETED
+  CANCELLED
+}
+
+enum OrderPaymentStatus {
+  UNPAID
+  PENDING
+  PAID
+  REFUNDED
+}
+
+enum FulfillmentType {
+  PICKUP
+  DELIVERY
+}
+
+enum PaymentProvider {
+  MANUAL
+  CASH
+  MOBILE_MONEY
+  CARD
+}
+
+enum PaymentRecordStatus {
+  PENDING
+  PAID
+  FAILED
+  CANCELLED
+  REFUNDED
+}
+
 enum EventType {
   PAGE_VIEW
   WHATSAPP_CLICK
   PHONE_CLICK
   DIRECTIONS_CLICK
   ORDER_CLICK
+  ORDER_CREATED
+  ORDER_CONFIRMED
+  ORDER_COMPLETED
+  ORDER_CANCELLED
+  PAYMENT_RECEIVED
   QUOTE_REQUEST
   BOOKING_CLICK
   PAYMENT_CLICK
@@ -116,6 +157,14 @@ model Business {
   tagline                String                @default("")
   highlights             String[]              @default([])
   category               String                @default("Other")
+  industryKey            String                @default("other")
+  subtype                String                @default("general")
+  capabilities           String[]              @default([])
+  profileData            Json?
+  websiteUrl             String?
+  socialLinks            Json?
+  preferredLanguage      String                @default("en")
+  currency               String                @default("RWF")
   logoUrl                String?
   coverImageUrl          String?
   phone                  String?
@@ -132,6 +181,8 @@ model Business {
   productAccessExpiresAt DateTime?
   isBlocked              Boolean               @default(false)
   onboardingStep         Int                   @default(0)
+  onboardingCompletedAt  DateTime?
+  publishedAt            DateTime?
   createdAt              DateTime              @default(now())
   updatedAt              DateTime              @updatedAt
   owner                  User                  @relation(fields: [ownerId], references: [id], onDelete: Cascade)
@@ -149,6 +200,7 @@ model Business {
   availabilityWindows    AvailabilityWindow[]
   availabilityBlocks     AvailabilityBlock[]
   bookings               Booking[]
+  orders                 Order[]
 
   @@index([ownerId])
 }
@@ -307,8 +359,79 @@ model Product {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  orderItems  OrderItem[]
 
   @@index([businessId])
+}
+
+model Order {
+  id                 String             @id @default(uuid())
+  sequence           Int                @unique @default(autoincrement())
+  orderNumber        String             @unique
+  publicToken        String             @unique @default(uuid())
+  businessId         String
+  customerName       String
+  customerPhone      String?
+  customerEmail      String?
+  customerNote       String             @default("")
+  fulfillment        FulfillmentType    @default(PICKUP)
+  deliveryAddress    String?
+  subtotal           Decimal            @db.Decimal(12, 2)
+  total              Decimal            @db.Decimal(12, 2)
+  currency           String             @default("RWF")
+  status             OrderStatus        @default(PENDING)
+  paymentStatus      OrderPaymentStatus @default(UNPAID)
+  confirmedAt        DateTime?
+  readyAt            DateTime?
+  completedAt        DateTime?
+  cancelledAt        DateTime?
+  cancellationReason String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  business           Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  items              OrderItem[]
+  payments           Payment[]
+
+  @@index([businessId, createdAt])
+  @@index([businessId, status, createdAt])
+  @@index([businessId, paymentStatus])
+}
+
+model OrderItem {
+  id         String    @id @default(uuid())
+  orderId    String
+  productId  String?
+  name       String
+  imageUrl   String?
+  unitPrice  Decimal   @db.Decimal(12, 2)
+  quantity   Int
+  lineTotal  Decimal   @db.Decimal(14, 2)
+  createdAt  DateTime  @default(now())
+  order      Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product    Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+model Payment {
+  id           String              @id @default(uuid())
+  orderId      String
+  provider     PaymentProvider     @default(MANUAL)
+  status       PaymentRecordStatus @default(PENDING)
+  amount       Decimal             @db.Decimal(12, 2)
+  currency     String              @default("RWF")
+  reference    String              @unique
+  payerPhone   String?
+  instructions String              @default("")
+  note         String?
+  paidAt       DateTime?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  order        Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, createdAt])
+  @@index([status, createdAt])
 }
 
 model Service {

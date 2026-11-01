@@ -4,6 +4,7 @@ import { useMutation } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, BadgeCheck, CalendarDays, Check, ChevronRight, Clock3, Copy, LoaderCircle, MessageCircle, ShieldCheck, Store } from "lucide-react";
 import { bookingService, resolveAssetUrl } from "../services/api";
 import { useBookingAvailability, usePublicBusiness } from "../hooks/apiHooks";
+import { useDocumentMeta } from "../hooks/useDocumentMeta";
 import { Button, Card, Heading, Input, Label, Textarea } from "../components/ui";
 import BrandLoader from "../components/BrandLoader";
 import { LanguageSwitcher, useLanguage } from "../i18n";
@@ -89,6 +90,12 @@ export default function BookingPage() {
       setCreated(booking);
       window.scrollTo({ top: 0, behavior: "smooth" });
     },
+  });
+
+  useDocumentMeta({
+    title: business ? `Book ${business.name} · e-businessRw` : "Book an appointment · e-businessRw",
+    description: business?.tagline || business?.description || (business ? `Book an appointment with ${business.name}.` : undefined),
+    image: business?.coverImageUrl ?? business?.logoUrl,
   });
 
   if (isLoading) return <BrandLoader />;
@@ -178,7 +185,7 @@ function SuccessPanel({ booking, business, privateLink, copied, onCopy }: { book
     <div className="p-6 sm:p-8">
       <div className="grid gap-3 rounded-2xl bg-[#f4faf7] p-4 text-sm sm:grid-cols-2"><div><p className="text-[10px] font-bold uppercase tracking-[.12em] text-[#6b8d82]">{t("Booking")}</p><p className="mt-1 font-bold">{booking.bookingNumber}</p></div><div><p className="text-[10px] font-bold uppercase tracking-[.12em] text-[#6b8d82]">{t("Service")}</p><p className="mt-1 font-bold">{booking.service.name}</p></div><div className="sm:col-span-2"><p className="text-[10px] font-bold uppercase tracking-[.12em] text-[#6b8d82]">{t("When")}</p><p className="mt-1 font-bold">{new Intl.DateTimeFormat(locale, { weekday: "long", month: "long", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: booking.timezone }).format(new Date(booking.startAt))}</p><p className="mt-0.5 text-xs text-[#6b8d82]">{booking.timezone}</p></div></div>
       <div className="mt-5 rounded-xl border border-[#cfe5dc] bg-[#fbfefc] p-4"><p className="text-xs font-bold text-[#234f49]">{t("Save your private booking link")}</p><p className="mt-1 text-[11px] leading-5 text-[#6b817a]">{t("Use this link to check the status, cancel, or leave a review after your appointment. Keep it private.")}</p><div className="mt-3 flex flex-wrap gap-2"><Button variant="secondary" onClick={onCopy} icon={<Copy size={15} />}>{copied ? t("Copied") : t("Copy link")}</Button><Link to={`/bookings/${booking.publicToken}`} className="btn btn-primary">{t("View booking")} <ArrowRight size={15} /></Link></div></div>
-      <div className="mt-5 flex flex-wrap gap-2">{whatsappDigits && <a href={`https://wa.me/${whatsappDigits}`} target="_blank" rel="noreferrer" className="btn btn-secondary"><MessageCircle size={16} />{t("Contact on WhatsApp")}</a>}<Link to={`/b/${business.slug}`} className="btn btn-ghost">{t("Back to business page")}</Link></div>
+      <div className="mt-5 flex flex-wrap gap-2">{whatsappDigits && <a href={`https://wa.me/${whatsappDigits}?text=${encodeURIComponent(`Hello ${business.name}, I booked ${booking.bookingNumber} for ${new Intl.DateTimeFormat(locale, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZone: booking.timezone }).format(new Date(booking.startAt))}.`)}`} target="_blank" rel="noreferrer" className="btn btn-secondary"><MessageCircle size={16} />{t("Contact on WhatsApp")}</a>}<Link to={`/b/${business.slug}`} className="btn btn-ghost">{t("Back to business page")}</Link></div>
       <p className="mt-4 text-center text-[10px] leading-4 text-muted">{privateLink}</p>
     </div>
   </Card>;

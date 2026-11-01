@@ -1,13 +1,17 @@
-import { ArrowRight, BadgeCheck, Check, Clock3, ShieldCheck } from "lucide-react";
-import { Badge, ButtonLink, Card, Heading } from "../components/ui";
+﻿import PricingSection from "./PricingSection";
+import { useDocumentMeta } from "../hooks/useDocumentMeta";
 import { useLanguage } from "../i18n";
-
-const plans = [
-  { code: "MONTHLY", name: "Monthly publishing", price: "10,000", period: "30 days", detail: "Flexible access for businesses getting started.", features: ["Publish up to 50 products", "Business storefront and customer requests", "Admin-verified Mobile Money payment", "Renew when your access is ending"] },
-  { code: "YEARLY", name: "Annual publishing", price: "100,000", period: "365 days", detail: "One payment for a full year of product visibility.", popular: true, features: ["Everything in Monthly", "Publish up to 50 products", "Save RWF 20,000 vs monthly", "One annual renewal"] },
-];
 
 export default function PricingPage() {
   const { t } = useLanguage();
-  return <div><section className="shell py-18 text-center sm:py-24"><Badge tone="success">{t("Simple publishing plans")}</Badge><Heading as="h1" className="mx-auto mt-5 max-w-4xl">{t("Your products deserve to be seen.")}</Heading><p className="mx-auto mt-5 max-w-2xl text-lg text-muted">{t("Keep your business page and customer enquiries ready. Choose a plan to publish products and services. On this development preview, checkout is simulated and activates immediately; production payments require a configured payment method.")}</p></section><section className="shell-wide pb-24"><div className="mx-auto grid max-w-5xl gap-6 md:grid-cols-2">{plans.map((plan) => <Card key={plan.code} className={`relative flex flex-col p-6 sm:p-8 ${plan.popular ? "border-[#087553] shadow-float" : ""}`}>{plan.popular && <Badge tone="success"><span className="absolute right-6 top-6">{t("Best value")}</span></Badge>}<p className="font-display text-xl font-bold">{t(plan.name)}</p><p className="mt-2 min-h-12 text-sm text-muted">{t(plan.detail)}</p><div className="mt-6 flex items-end gap-2"><span className="font-display text-4xl font-bold">RWF {plan.price}</span><span className="mb-1 text-sm text-muted">/ {t(plan.period)}</span></div><ButtonLink to="/register" variant={plan.popular ? "primary" : "secondary"} className="mt-6 w-full">{t("Get started")} <ArrowRight size={16} /></ButtonLink><div className="mt-7 space-y-3">{plan.features.map((feature) => <p key={feature} className="flex items-center gap-3 text-sm"><Check size={16} className="shrink-0 text-success" />{t(feature)}</p>)}</div></Card>)}</div><div className="mt-10 flex flex-wrap justify-center gap-x-7 gap-y-3 text-sm text-muted"><span className="flex items-center gap-2"><ShieldCheck size={16} className="text-success" />{t("Demo activation here · manual review for real payments")}</span><span className="flex items-center gap-2"><Clock3 size={16} />{t("30 or 365 days of access")}</span><span className="flex items-center gap-2"><BadgeCheck size={16} className="text-success" />{t("50 published products")}</span></div></section></div>;
+  useDocumentMeta({
+    title: `${t("Simple publishing plans")} | e-businessRw`,
+    description: t("Keep your business page and customer enquiries ready. Choose a plan to publish products and services."),
+  });
+
+  return (
+    <div className="lz-page lz-pg">
+      <PricingSection />
+    </div>
+  );
 }

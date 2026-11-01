@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import { randomBytes } from "node:crypto";
 import { prisma } from "../config/prisma.js";
 import { env } from "../config/env.js";
+import { findIndustryForCategory, getIndustry, getSubtype } from "../config/businessCatalog.js";
 import { createDefaultTemplate } from "../services/templates.js";
 import { conflict, notFound, unauthorized } from "../utils/errors.js";
 import { success } from "../utils/responses.js";
@@ -22,7 +23,7 @@ const currentUser = {
   name: true,
   email: true,
   role: true,
-  business: { select: { id: true, name: true, slug: true, category: true, isPublished: true, canPublishProducts: true, productAccessExpiresAt: true } },
+  business: { select: { id: true, name: true, slug: true, category: true, industryKey: true, subtype: true, capabilities: true, currency: true, onboardingStep: true, onboardingCompletedAt: true, publishedAt: true, isPublished: true, canPublishProducts: true, productAccessExpiresAt: true } },
 } as const;
 
 export const register = asyncHandler(async (request, response) => {
@@ -34,13 +35,36 @@ export const register = asyncHandler(async (request, response) => {
   let slug = slugify(input.businessName) || "business";
   if (await prisma.business.findUnique({ where: { slug }, select: { id: true } })) slug = `${slug}-${randomBytes(3).toString("hex")}`;
 
+  const industry = getIndustry(input.industryKey) ?? findIndustryForCategory(input.category);
+  const subtype = industry.key === "other" && input.subtype?.trim()
+    ? { key: input.subtype.trim(), label: input.subtype.trim() }
+    : getSubtype(industry.key, input.subtype) ?? industry.subtypes[0]!;
+  const category = input.category?.trim() || subtype.label;
+
   const user = await prisma.$transaction(async (transaction) => {
     const createdUser = await transaction.user.create({
       data: {
         name: input.name,
         email,
         passwordHash,
-        business: { create: { name: input.businessName, slug, category: input.category ?? "Other" } },
+        business: {
+          create: {
+            name: input.businessName,
+            slug,
+            category,
+            industryKey: input.industryKey ?? industry.key,
+            subtype: subtype.key,
+            capabilities: industry.recommended,
+            profileData: {},
+            description: input.description ?? "",
+            phone: input.phone || null,
+            whatsapp: input.whatsapp || null,
+            city: input.city || null,
+            address: input.address || null,
+            preferredLanguage: "en",
+            currency: "RWF",
+          },
+        },
       },
       select: currentUser,
     });

@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { ArrowRight, BadgeCheck, CalendarDays, Camera, Clock3, ExternalLink, Image as ImageIcon, Mail, MapPin, MessageCircle, Minus, Phone, Plus, Search, Share2, ShoppingBag, ShoppingCart, Star, Store, UtensilsCrossed, X } from "lucide-react";
 import { resolveAssetUrl } from "../services/api";
 import { LanguageSwitcher, useLanguage } from "../i18n";
+import { effectiveCapabilities } from "../lib/capabilities";
 import type { PublicBusiness, PublicProduct, PublicService } from "./PublicBusinessPage";
 
 type Setter<T> = Dispatch<SetStateAction<T>>;
@@ -64,11 +65,22 @@ export default function BusinessStorefront(props: BusinessStorefrontProps) {
   const {
     business, products, visibleProducts, visibleServices, categories, search, setSearch, category, setCategory,
     cartItems, cartCount, cartTotal, cartOpen, setCartOpen, copied, shareUrl, sharePage, addToCart,
-    sendOrderRequest, changeCartQuantity, track, phoneLink, whatsappLink, directionsLink, openingHours,
+    sendOrderRequest, changeCartQuantity, track, phoneLink, whatsappLink: rawWhatsappLink, directionsLink, openingHours,
   } = props;
   const [activeSection, setActiveSection] = useState("home");
   const cartCloseRef = useRef<HTMLButtonElement>(null);
   const lastFocusedRef = useRef<HTMLElement | null>(null);
+
+  const capabilities = effectiveCapabilities(business.capabilities);
+  const canOrder = capabilities.has("product_orders");
+  const canBook = capabilities.has("appointments");
+  const canRequest = capabilities.has("service_requests");
+  const canShowProducts = capabilities.has("products") && products.length > 0;
+  const canShowServices = capabilities.has("services") && business.services.length > 0;
+  const canShowReviews = capabilities.has("reviews");
+  const canShowPortfolio = capabilities.has("portfolio");
+  const canShowContactForm = capabilities.has("contact_form");
+  const whatsappLink = capabilities.has("whatsapp_contact") ? rawWhatsappLink : undefined;
 
   const gallery = useMemo(() => {
     const images = [
@@ -79,16 +91,17 @@ export default function BusinessStorefront(props: BusinessStorefrontProps) {
     return images.filter((image, index) => images.findIndex((candidate) => candidate.url === image.url) === index);
   }, [business]);
   const theme = themeFor(business.category);
-  const onlineBooking = Boolean(business.bookingSettings?.isEnabled && business.availabilityWindows?.length);
+  const onlineBooking = canBook && Boolean(business.bookingSettings?.isEnabled && business.availabilityWindows?.length);
   const bookableServices = business.services.filter((service) => service.isBookable && service.durationMinutes && onlineBooking);
   const bookingUrl = bookableServices.length === 1 ? `/b/${business.slug}/book?service=${bookableServices[0]!.id}` : `/b/${business.slug}/book`;
   const sections = [
     { label: "Home", href: "#home", icon: <Store size={16} /> },
-    ...(products.length ? [{ label: "Products", href: "#products", icon: <ShoppingBag size={16} /> }] : []),
-    ...(business.services.length ? [{ label: "Services", href: "#services", icon: <UtensilsCrossed size={16} /> }] : []),
+    ...(canShowProducts ? [{ label: "Products", href: "#products", icon: <ShoppingBag size={16} /> }] : []),
+    ...(canShowServices ? [{ label: "Services", href: "#services", icon: <UtensilsCrossed size={16} /> }] : []),
     ...(bookableServices.length ? [{ label: "Book online", href: "#booking", icon: <CalendarDays size={16} /> }] : []),
-    ...(gallery.length ? [{ label: "Gallery", href: "#gallery", icon: <Camera size={16} /> }] : []),
-    { label: "Reviews", href: "#reviews", icon: <Star size={16} /> },
+    ...(business.profileDetails?.length ? [{ label: "Details", href: "#details", icon: <BadgeCheck size={16} /> }] : []),
+    ...(canShowPortfolio && gallery.length ? [{ label: "Gallery", href: "#gallery", icon: <Camera size={16} /> }] : []),
+    ...(canShowReviews ? [{ label: "Reviews", href: "#reviews", icon: <Star size={16} /> }] : []),
     { label: "Contact", href: "#contact", icon: <MessageCircle size={16} /> },
   ];
   const sectionIds = sections.map((section) => section.href.slice(1)).join(" ");
@@ -142,7 +155,7 @@ export default function BusinessStorefront(props: BusinessStorefrontProps) {
           <span className="sf-header-lang"><LanguageSwitcher compact /></span>
           <button type="button" onClick={() => void sharePage()} className="sf-icon-btn" aria-label={copied ? t("Copied") : t("Share")}><Share2 size={17} /><span className="sf-tool-label">{copied ? t("Copied") : t("Share")}</span></button>
           {whatsappLink && <a href={whatsappLink} target="_blank" rel="noreferrer" onClick={() => track("WHATSAPP_CLICK")} className="sf-btn sf-btn-whatsapp sf-header-cta"><MessageCircle size={16} />{t("Contact us")}</a>}
-          {products.length > 0 && <button type="button" onClick={() => setCartOpen(true)} aria-label={`${t("Open order")}, ${cartCount} ${t("items")}`} className="sf-icon-btn sf-cart-btn"><ShoppingCart size={18} />{cartCount > 0 && <span className="sf-cart-count">{cartCount}</span>}</button>}
+          {canShowProducts && canOrder && <button type="button" onClick={() => setCartOpen(true)} aria-label={`${t("Open order")}, ${cartCount} ${t("items")}`} className="sf-icon-btn sf-cart-btn"><ShoppingCart size={18} />{cartCount > 0 && <span className="sf-cart-count">{cartCount}</span>}</button>}
         </div>
       </div>
       <div className="sf-navbar">
@@ -172,7 +185,7 @@ export default function BusinessStorefront(props: BusinessStorefrontProps) {
             <div className="sf-hero-actions">
               {bookableServices.length
                 ? <Link to={bookingUrl} onClick={() => track("BOOKING_CLICK")} className="sf-btn sf-btn-hero-primary" style={{ backgroundColor: theme.accent, color: theme.accentText }}><CalendarDays size={17} />{t("Book an appointment")}<ArrowRight size={16} /></Link>
-                : <a href={business.services.length ? "#services" : "#contact"} className="sf-btn sf-btn-hero-primary" style={{ backgroundColor: theme.accent, color: theme.accentText }}>{business.services.length ? t("View services") : t("Send a request")}<ArrowRight size={16} /></a>}
+                : <a href={canShowServices ? "#services" : canRequest ? requestUrl : "#contact"} className="sf-btn sf-btn-hero-primary" style={{ backgroundColor: theme.accent, color: theme.accentText }}>{canShowServices ? t("View services") : canRequest ? t("Send a request") : t("Contact us")}<ArrowRight size={16} /></a>}
               {whatsappLink && <a href={whatsappLink} target="_blank" rel="noreferrer" onClick={() => track("WHATSAPP_CLICK")} className="sf-btn sf-btn-hero-ghost"><MessageCircle size={16} />{t("Chat on WhatsApp")}</a>}
               {phoneLink && <a href={phoneLink} onClick={() => track("PHONE_CLICK")} className="sf-btn sf-btn-hero-ghost"><Phone size={15} />{t("Call")}</a>}
             </div>
@@ -190,16 +203,18 @@ export default function BusinessStorefront(props: BusinessStorefrontProps) {
           </div>
           <div className="sf-info-actions">
             {whatsappLink && <a href={whatsappLink} target="_blank" rel="noreferrer" onClick={() => track("WHATSAPP_CLICK")} className="sf-btn sf-btn-soft"><MessageCircle size={16} />{t("WhatsApp")}</a>}
-            <Link to={requestUrl} className="sf-btn sf-btn-primary">{t("Send a request")}<ArrowRight size={15} /></Link>
+            {canRequest && <Link to={requestUrl} className="sf-btn sf-btn-primary">{t("Send a request")}<ArrowRight size={15} /></Link>}
           </div>
         </div>
       </div>}
 
       {business.offers.length > 0 && <div className="sf-container sf-offers">{business.offers.map((offer) => <article key={offer.id} className="sf-offer"><div><p className="sf-eyebrow">{t("Current offer")}</p><h2>{offer.title}</h2>{offer.description && <p>{offer.description}</p>}</div><span className="sf-offer-badge">{offer.discountType === "PERCENTAGE" ? `${Number(offer.discountValue)}% ${t("off")}` : currency(offer.discountValue)}</span></article>)}</div>}
 
+      {business.profileDetails?.length ? <div className="sf-container"><section id="details" className="sf-card sf-section"><SectionHeading icon={<BadgeCheck size={19} />} eyebrow={t("At a glance")} title={t("Business details")} /><dl className="grid gap-3 sm:grid-cols-2">{business.profileDetails.map((detail) => <div key={detail.key} className="rounded-xl border border-line bg-[#faf9f6] p-4"><dt className="text-xs font-bold uppercase tracking-wide text-muted">{detail.label}</dt><dd className="mt-1 text-sm font-semibold text-ink">{detail.value}</dd></div>)}</dl></section></div> : null}
+
       <div className="sf-container sf-layout">
         <div className="sf-content">
-          {products.length > 0 && <section id="products" className="sf-card sf-section">
+          {canShowProducts && <section id="products" className="sf-card sf-section">
             <SectionHeading icon={<ShoppingBag size={19} />} eyebrow={t("Browse the catalog")} title={t("Products")} action={<span className="sf-section-count">{products.length} {t("items")}</span>} />
             <div className="sf-toolbar">
               <div className="sf-chips">{categories.map((item) => <button type="button" key={item} onClick={() => setCategory(item)} className="sf-chip-btn" data-active={category === item}>{category === "All" && item === "All" ? t("All") : item}</button>)}</div>
@@ -215,7 +230,7 @@ export default function BusinessStorefront(props: BusinessStorefrontProps) {
                 {product.description && <p className="sf-product-desc">{product.description}</p>}
                 <div className="sf-product-foot">
                   <p className="sf-price">{currency(product.price, product.currency)}</p>
-                  <button type="button" onClick={() => addToCart(product)} className="sf-add"><Plus size={13} />{t("Order")}</button>
+                  {canOrder && <button type="button" onClick={() => addToCart(product)} className="sf-add"><Plus size={13} />{t("Order")}</button>}
                 </div>
               </div>
             </article>)}</div> : <p className="sf-empty">{t("No products match this search.")}</p>}
@@ -229,7 +244,7 @@ export default function BusinessStorefront(props: BusinessStorefrontProps) {
             <div className="sf-booking-services">{bookableServices.slice(0, 4).map((service) => <Link key={service.id} to={`/b/${business.slug}/book?service=${service.id}`} onClick={() => track("BOOKING_CLICK", { serviceId: service.id })} className="sf-booking-service"><span><strong>{service.name}</strong><small><Clock3 size={11} />{service.durationMinutes} {t("minutes")}</small></span><ArrowRight size={15} style={{ color: theme.accent }} /></Link>)}</div>
           </section>}
 
-          {business.services.length > 0 && <section id="services" className="sf-card sf-section">
+          {canShowServices && <section id="services" className="sf-card sf-section">
             <SectionHeading icon={<UtensilsCrossed size={19} />} eyebrow={t("Ways we can help")} title={t("Services")} />
             {visibleServices.length ? <div className="sf-services">{visibleServices.map((service) => <article key={service.id} className="sf-service">
               <div className="sf-service-media">{service.imageUrl ? <img src={resolveAssetUrl(service.imageUrl)} alt="" loading="lazy" /> : <UtensilsCrossed size={22} />}</div>
@@ -239,17 +254,19 @@ export default function BusinessStorefront(props: BusinessStorefrontProps) {
                 <div className="sf-service-meta"><span className="sf-price">{t("From")} {currency(service.startingPrice, service.currency)}</span>{service.duration && <span className="sf-service-duration">{service.duration}</span>}</div>
                 {service.isBookable && service.durationMinutes && onlineBooking
                   ? <Link to={`/b/${business.slug}/book?service=${service.id}`} onClick={() => track("BOOKING_CLICK", { serviceId: service.id })} className="sf-service-link"><CalendarDays size={14} />{t("Book online")}<ArrowRight size={14} /></Link>
-                  : <Link to={requestUrl} state={{ selectedService: { id: service.id, name: service.name } }} className="sf-service-link">{t("Request this service")}<ArrowRight size={14} /></Link>}
+                  : canRequest
+                    ? <Link to={requestUrl} state={{ selectedService: { id: service.id, name: service.name } }} className="sf-service-link">{t("Request this service")}<ArrowRight size={14} /></Link>
+                    : <a href="#contact" className="sf-service-link">{t("Contact us")}<ArrowRight size={14} /></a>}
               </div>
             </article>)}</div> : <p className="sf-empty">{t("No services match this search.")}</p>}
           </section>}
 
-          {gallery.length > 0 && <section id="gallery" className="sf-card sf-section">
+          {canShowPortfolio && gallery.length > 0 && <section id="gallery" className="sf-card sf-section">
             <SectionHeading icon={<Camera size={19} />} eyebrow={t("From the catalog")} title={t("Gallery")} action={<span className="sf-section-count">{gallery.length} {t("photos")}</span>} />
             <div className="sf-gallery" data-count={Math.min(gallery.length, 6)}>{gallery.slice(0, 6).map((image) => <img key={image.id} src={resolveAssetUrl(image.url)} alt={image.label} loading="lazy" />)}</div>
           </section>}
 
-          <section id="reviews" className="sf-card sf-section">
+          {canShowReviews && <section id="reviews" className="sf-card sf-section">
             <SectionHeading icon={<Star size={18} className="fill-current" />} eyebrow={t("Customer feedback")} title={t("Reviews")} action={business.reviewCount > 0 ? <span className="sf-section-count"><Star size={13} className="fill-current" />{business.rating.toFixed(1)} · {business.reviewCount}</span> : undefined} />
             {business.reviews.length ? <div className="sf-reviews">{business.reviews.slice(0, 4).map((review) => <article key={review.id} className="sf-review">
               <div className="sf-review-head">
@@ -258,7 +275,7 @@ export default function BusinessStorefront(props: BusinessStorefrontProps) {
               </div>
               <p>{review.comment}</p>
             </article>)}</div> : <div className="sf-empty sf-empty-row"><span className="sf-section-icon"><Star size={18} /></span><p>{t("No published reviews yet.")}</p></div>}
-          </section>
+          </section>}
         </div>
 
         <aside className="sf-sidebar">
@@ -267,7 +284,8 @@ export default function BusinessStorefront(props: BusinessStorefrontProps) {
             <p className="sf-contact-copy">{t("Get in touch with the business for questions or service requests.")}</p>
             <div className="sf-contact-actions">
               {whatsappLink && <a href={whatsappLink} target="_blank" rel="noreferrer" onClick={() => track("WHATSAPP_CLICK")} className="sf-btn sf-btn-whatsapp sf-btn-block"><MessageCircle size={17} />{t("Chat on WhatsApp")}</a>}
-              <Link to={requestUrl} className="sf-btn sf-btn-outline sf-btn-block">{t("Send a request")}<ArrowRight size={15} /></Link>
+              {canRequest && <Link to={requestUrl} className="sf-btn sf-btn-outline sf-btn-block">{t("Send a request")}<ArrowRight size={15} /></Link>}
+              {!canRequest && canShowContactForm && business.email && <a href={`mailto:${business.email}`} className="sf-btn sf-btn-outline sf-btn-block"><Mail size={15} />{t("Email us")}</a>}
             </div>
             {(phoneLink || business.email || location || openingHours) && <div className="sf-contact-list">
               {phoneLink && <a href={phoneLink} onClick={() => track("PHONE_CLICK")}><span className="sf-contact-icon"><Phone size={16} /></span><span><small>{t("Call")}</small><strong>{business.phone}</strong></span></a>}
@@ -311,9 +329,11 @@ export default function BusinessStorefront(props: BusinessStorefrontProps) {
     </footer>
 
     <div className="sf-mobile-bar">
-      {products.length > 0
+      {canShowProducts && canOrder
         ? <button type="button" onClick={() => setCartOpen(true)} className="sf-mobile-primary"><ShoppingCart size={17} />{t("Order")}{cartCount > 0 && ` (${cartCount})`}</button>
-        : <Link to={requestUrl} className="sf-mobile-primary"><MessageCircle size={17} />{t("Request")}</Link>}
+        : canRequest
+          ? <Link to={requestUrl} className="sf-mobile-primary"><MessageCircle size={17} />{t("Request")}</Link>
+          : <a href="#contact" className="sf-mobile-primary"><MessageCircle size={17} />{t("Contact")}</a>}
       {whatsappLink
         ? <a href={whatsappLink} target="_blank" rel="noreferrer" onClick={() => track("WHATSAPP_CLICK")} className="sf-mobile-secondary"><MessageCircle size={17} />WhatsApp</a>
         : phoneLink
@@ -343,7 +363,7 @@ export default function BusinessStorefront(props: BusinessStorefrontProps) {
           </article>)}</div>
           <div className="sf-drawer-foot">
             <div className="sf-total"><span>{t("Estimated total")}</span><strong>{currency(cartTotal, cartItems[0]?.currency)}</strong></div>
-            <p>{t("The business will confirm availability, the final price, and pickup or delivery after your order request.")}</p>
+            <p>{t("Review your items, choose pickup or delivery, and place the order. The business will confirm it and arrange payment.")}</p>
             <button type="button" onClick={sendOrderRequest} className="sf-btn sf-btn-primary sf-btn-block">{t("Continue to order")}<ArrowRight size={16} /></button>
           </div>
         </> : <div className="sf-drawer-empty"><span className="sf-section-icon"><ShoppingCart size={22} /></span><h3>{t("Your order is empty")}</h3><p>{t("Browse the catalog to add an item.")}</p><button type="button" onClick={() => setCartOpen(false)} className="sf-btn sf-btn-outline">{t("Continue shopping")}</button></div>}

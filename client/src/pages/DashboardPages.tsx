@@ -1,11 +1,14 @@
-import { ArrowRight, BarChart3, Bell, CalendarDays, Check, ChevronDown, ChevronRight, ChevronUp, Clipboard, Compass, Copy, Eye, FileText, Gift, Image, MessageCircle, MoreHorizontal, Package, Pencil, Phone, Plus, Search, Send, ShieldAlert, Sparkles, Trash2, TrendingUp, Users, type LucideIcon } from "lucide-react";
+import { ArrowRight, BarChart3, Bell, CalendarDays, Check, ChevronDown, ChevronRight, ChevronUp, Clipboard, Compass, Copy, Eye, FileText, Gift, Image, MessageCircle, MoreHorizontal, Package, Pencil, Phone, Plus, Search, Send, ShieldAlert, Sparkles, Trash2, TrendingUp, Users, X, type LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { businessService, offerService, productService, quoteService, requestService, resolveAssetUrl, serviceService } from "../services/api";
+import { bookingService, businessService, offerService, orderService, productService, quoteService, requestService, resolveAssetUrl, serviceService } from "../services/api";
 import { Badge, Button, ButtonLink, Card, Heading, Input, Label, Select, Stat, Textarea } from "../components/ui";
 import { ImageUploadField } from "../components/ImageUploadField";
-import { queryKeys, useBusinessAnalytics, useBusinessRequests, useCurrentUser } from "../hooks/apiHooks";
+import { ProfileFieldInput } from "../components/ProfileFieldInput";
+import { queryKeys, useBusinessAnalytics, useBusinessCatalog, useBusinessRequests, useCurrentUser, useProfileCompletion } from "../hooks/apiHooks";
+import { effectiveCapabilities } from "../lib/capabilities";
+import type { BusinessCatalog, BusinessSetup, ProfileCompletion, ProfileField, ProfileSectionKey } from "../types/business";
 import { useLanguage } from "../i18n";
 
 const money = (n: number | string) => `RWF ${Number(n).toLocaleString()}`;
@@ -173,25 +176,93 @@ function ErrorNotice({ message }: { message: string }) {
 
 export function DashboardHome() {
   const { t } = useLanguage();
+  const location = useLocation();
+  const welcomeState = location.state as { registered?: boolean; published?: boolean } | null;
+  const [showWelcome, setShowWelcome] = useState(Boolean(welcomeState?.registered));
   const [copied, setCopied] = useState(false);
   const { data: user } = useCurrentUser();
   const businessInfo = user?.business;
+  const capabilities = effectiveCapabilities(businessInfo?.capabilities);
+  const canOrders = capabilities.has("product_orders");
+  const canBookings = capabilities.has("appointments");
+  const canRequests = capabilities.has("service_requests");
+  const canProducts = capabilities.has("products");
+  const canServices = capabilities.has("services");
   const { data: analytics, isLoading: analyticsLoading, isError: analyticsError, error: analyticsReason } = useBusinessAnalytics<AnalyticsRecord>(businessInfo?.id);
-  const { data: requests, isLoading: requestsLoading, isError: requestsError, error: requestsReason } = useBusinessRequests<RequestRecord>(businessInfo?.id);
+  const { data: requests, isLoading: requestsLoading, isError: requestsError, error: requestsReason } = useBusinessRequests<RequestRecord>(canRequests ? businessInfo?.id : undefined);
+  const { data: profileCompletion, isLoading: profileCompletionLoading } = useProfileCompletion<ProfileCompletion>(businessInfo?.id);
+  const { data: checklistProducts, isLoading: checklistProductsLoading } = useQuery<unknown[]>({
+    queryKey: ["products", businessInfo?.id ?? ""],
+    queryFn: () => productService.list<unknown>(businessInfo!.id),
+    enabled: Boolean(businessInfo?.id) && canProducts,
+  });
+  const { data: checklistServices, isLoading: checklistServicesLoading } = useQuery<unknown[]>({
+    queryKey: ["services", businessInfo?.id ?? ""],
+    queryFn: () => serviceService.list<unknown>(businessInfo!.id),
+    enabled: Boolean(businessInfo?.id) && canServices,
+  });
+  const { data: bookingSettings, isLoading: bookingSettingsLoading } = useQuery<{ configured: boolean }>({
+    queryKey: queryKeys.bookingSettings(businessInfo?.id ?? ""),
+    queryFn: () => bookingService.getSettings<{ configured: boolean }>(businessInfo!.id),
+    enabled: Boolean(businessInfo?.id) && canBookings,
+  });
+  const { data: orderSummary } = useQuery<{ pending: number; processing: number; ready: number; completed: number }>({
+    queryKey: queryKeys.orderSummary(businessInfo?.id ?? ""),
+    queryFn: () => orderService.summary<{ pending: number; processing: number; ready: number; completed: number }>(businessInfo!.id),
+    enabled: Boolean(businessInfo?.id) && canOrders,
+  });
+  const { data: bookingSummary } = useQuery<{ today: number; pending: number; confirmed: number }>({
+    queryKey: queryKeys.bookingSummary(businessInfo?.id ?? ""),
+    queryFn: () => bookingService.summary<{ today: number; pending: number; confirmed: number }>(businessInfo!.id),
+    enabled: Boolean(businessInfo?.id) && canBookings,
+  });
+  const [checklistDismissed, setChecklistDismissed] = useState(false);
+  useEffect(() => {
+    if (businessInfo?.id) setChecklistDismissed(window.localStorage.getItem(`setup-checklist-dismissed:${businessInfo.id}`) === "1");
+  }, [businessInfo?.id]);
   const pageLink = businessInfo ? `${window.location.origin}/b/${businessInfo.slug}` : "";
+  const industryKey = businessInfo?.industryKey ?? "other";
+  const productTaskLabel = industryKey === "food" ? "Add your first menu item" : "Add your first product";
+  const serviceTaskLabel = industryKey === "beauty" ? "Add your first service" : industryKey === "accommodation" ? "Describe what guests can book" : industryKey === "real_estate" ? "Add your first service or listing" : "Add your first service";
+  const setupTasks: Array<{ key: string; label: string; detail: string; done: boolean; href: string }> = [
+    ...(canProducts ? [{ key: "product", label: productTaskLabel, detail: "Show customers what you sell and at what price.", done: (checklistProducts?.length ?? 0) > 0, href: "/dashboard/products" }] : []),
+    ...(canServices ? [{ key: "service", label: serviceTaskLabel, detail: "Let customers see what you offer and how long it takes.", done: (checklistServices?.length ?? 0) > 0, href: "/dashboard/services" }] : []),
+    ...(canBookings ? [{ key: "availability", label: "Set booking availability", detail: "Choose the days and times customers can book.", done: Boolean(bookingSettings?.configured), href: "/dashboard/bookings" }] : []),
+  ];
+  const completedTasks = setupTasks.filter((task) => task.done).length;
+  const pendingTasks = setupTasks.filter((task) => !task.done);
+  const setupProgress = setupTasks.length ? Math.round((completedTasks / setupTasks.length) * 100) : 0;
+  const setupLoading = (canProducts && checklistProductsLoading) || (canServices && checklistServicesLoading) || (canBookings && bookingSettingsLoading);
+  const plannedModuleNote = industryKey === "accommodation"
+    ? "Room and reservation modules are coming soon. Use services and requests for now."
+    : industryKey === "real_estate"
+      ? "Property listing pages are coming soon. Use services and requests for now."
+      : "";
+  const dismissChecklist = () => {
+    setChecklistDismissed(true);
+    if (businessInfo?.id) window.localStorage.setItem(`setup-checklist-dismissed:${businessInfo.id}`, "1");
+  };
+  const welcomePublished = businessInfo?.isPublished ?? welcomeState?.published ?? false;
 
   if (!businessInfo) return <Card className="mx-auto max-w-2xl p-8"><Heading as="h1">{t("Set up your business")}</Heading><p className="mt-3 text-muted">{t("Complete onboarding to create your business page.")}</p><ButtonLink to="/onboarding" className="mt-6">{t("Continue setup")}</ButtonLink></Card>;
 
   return <div className="mx-auto max-w-7xl">
-    <div className="flex flex-col justify-between gap-5 md:flex-row md:items-end"><div className="min-w-0"><Badge tone={businessInfo.isPublished ? "success" : "warning"}><span className={`size-1.5 rounded-full ${businessInfo.isPublished ? "bg-success" : "bg-warning"}`} /> {businessInfo.isPublished ? t("Your page is live") : t("Your page is unpublished")}</Badge><Heading as="h1" className="mt-4">{t("Welcome")}, {user?.name.split(" ")[0]}.</Heading><p className="mt-2 text-muted">{t("Here’s how customers are engaging with")} {businessInfo.name}.</p></div><div className="flex flex-wrap gap-2"><ButtonLink to="/dashboard/billing" variant="secondary" className="flex-1 sm:flex-none" icon={<Bell size={17} />}>{t("Plans & updates")}</ButtonLink><ButtonLink to="/dashboard/requests" className="flex-1 sm:flex-none" icon={<Plus size={17} />}>{t("View requests")}</ButtonLink></div></div>
+    <div className="flex flex-col justify-between gap-5 md:flex-row md:items-end"><div className="min-w-0"><Badge tone={businessInfo.isPublished ? "success" : "warning"}><span className={`size-1.5 rounded-full ${businessInfo.isPublished ? "bg-success" : "bg-warning"}`} /> {businessInfo.isPublished ? t("Your page is live") : t("Your page is unpublished")}</Badge><Heading as="h1" className="mt-4">{t("Welcome")}, {user?.name.split(" ")[0]}.</Heading><p className="mt-2 text-muted">{t("Here’s how customers are engaging with")} {businessInfo.name}.</p></div><div className="flex flex-wrap gap-2"><ButtonLink to="/dashboard/billing" variant="secondary" className="flex-1 sm:flex-none" icon={<Bell size={17} />}>{t("Plans & updates")}</ButtonLink>{canRequests && <ButtonLink to="/dashboard/requests" className="flex-1 sm:flex-none" icon={<Plus size={17} />}>{t("View requests")}</ButtonLink>}</div></div>
+    {showWelcome && <Card className="mt-6 border-[#c8e4d5] bg-[#f1f8f2] p-5 sm:p-6"><div className="flex items-start justify-between gap-4"><div><p className="font-display text-lg font-bold text-[#075b43]">{t("Your business is set up!")}</p><p className="mt-2 text-sm text-[#315f51]">{welcomePublished ? t("Your public page is live and ready to share. Add products, services or photos whenever you like.") : t("Your page is saved as a draft. Publish it when you are ready to share it with customers.")}</p></div><button type="button" onClick={() => setShowWelcome(false)} className="rounded-full p-1.5 text-[#315f51] hover:bg-white" aria-label={t("Dismiss welcome message")}><X size={17} /></button></div><div className="mt-4 flex flex-wrap gap-2"><ButtonLink to={`/b/${businessInfo.slug}`} target="_blank" rel="noopener noreferrer" variant="secondary">{t("View public page")}</ButtonLink>{!welcomePublished && <ButtonLink to="/dashboard/settings">{t("Publish page")}</ButtonLink>}</div></Card>}
+    {!profileCompletionLoading && profileCompletion && <Card className="mt-8 p-5 sm:p-6"><div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start"><div><p className="font-display text-lg font-bold">{t("Profile completion")}</p><p className="mt-1 max-w-2xl text-sm text-muted">{t("Customers see this information on your public page. It is separate from your operational setup.")}</p></div><ButtonLink to="/dashboard/business-page" variant="secondary">{t("Edit business page")}</ButtonLink></div><div className="mt-5 flex items-end justify-between gap-4"><strong className="font-display text-3xl font-bold">{profileCompletion.percentage}%</strong><span className="text-xs text-muted">{t("Based on your saved profile details")}</span></div><div className="mt-3 h-2 overflow-hidden rounded-full bg-[#eef1eb]"><div className="h-full rounded-full bg-success transition-all" style={{ width: `${profileCompletion.percentage}%` }} /></div>{profileCompletion.recommendations.length > 0 ? <div className="mt-5 grid gap-2 sm:grid-cols-2">{profileCompletion.recommendations.slice(0, 6).map((item) => <Link key={item.key} to={item.href} className="flex items-start gap-3 rounded-xl border border-line bg-white p-3 transition hover:border-violet"><span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border border-line text-transparent"><Check size={12} /></span><span className="min-w-0 flex-1"><span className="flex items-center justify-between gap-2"><span className="text-sm font-bold">{t(item.label)}</span><span className="text-[11px] font-bold text-muted">+{Math.round(item.weight)}%</span></span><span className="mt-0.5 block text-xs leading-5 text-muted">{t(item.recommendation)}</span></span><ChevronRight size={15} className="mt-1 shrink-0 text-muted" /></Link>)}</div> : <p className="mt-4 rounded-xl bg-[#f1f8f2] p-3 text-sm font-semibold text-[#075b43]">{t("Your public profile is complete.")}</p>}{!businessInfo.isPublished && <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[#fff8e8] p-3 text-sm"><span>{t("Your public page is not published yet.")}</span><ButtonLink to="/dashboard/settings" variant="secondary">{t("Publish page")}</ButtonLink></div>}</Card>}
+    {!checklistDismissed && !setupLoading && setupTasks.length > 0 && pendingTasks.length > 0 && <Card className="mt-6 p-5 sm:p-6"><div className="flex items-start justify-between gap-4"><div><p className="font-display text-lg font-bold">{t("Operational setup")}</p><p className="mt-1 text-xs text-muted">{completedTasks} {t("of")} {setupTasks.length} {t("complete · products, services and bookings")}</p></div><button type="button" onClick={dismissChecklist} className="rounded-full p-1.5 text-muted hover:bg-[#faf9f6]" aria-label={t("Dismiss operational setup checklist")}><X size={17} /></button></div><div className="mt-4 h-2 overflow-hidden rounded-full bg-[#eef1eb]"><div className="h-full rounded-full bg-violet transition-all" style={{ width: `${setupProgress}%` }} /></div><div className="mt-5 grid gap-2 sm:grid-cols-2">{setupTasks.map((task) => <Link key={task.key} to={task.href} className={`flex items-start gap-3 rounded-xl border p-3 transition hover:border-violet ${task.done ? "border-line bg-[#faf9f6] opacity-70" : "border-line bg-white"}`}><span className={`mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full border ${task.done ? "border-success bg-success text-white" : "border-line text-transparent"}`}><Check size={12} /></span><span className="min-w-0 flex-1"><span className="block text-sm font-bold">{t(task.label)}</span><span className="mt-0.5 block text-xs leading-5 text-muted">{t(task.detail)}</span></span><ChevronRight size={15} className="mt-1 shrink-0 text-muted" /></Link>)}</div>{plannedModuleNote && <p className="mt-4 rounded-xl bg-[#faf9f6] p-3 text-xs leading-5 text-muted">{t(plannedModuleNote)}</p>}</Card>}
     <Card className="dashboard-public-link mt-8 overflow-hidden border-0 bg-ink p-5 text-white shadow-card sm:p-7"><div className="flex min-w-0 flex-col justify-between gap-5 lg:flex-row lg:items-center"><div className="min-w-0"><p className="text-xs font-bold uppercase tracking-wider text-white/50">{t("Your public business link")}</p><p className="mt-2 break-all font-display text-base font-bold sm:text-xl">{pageLink}</p><p className="mt-2 text-sm text-white/65">{t("Share it everywhere customers discover you.")}</p></div><div className="flex flex-wrap gap-2"><Button variant="white" className="flex-1 sm:flex-none" disabled={!businessInfo.isPublished} onClick={() => { void navigator.clipboard.writeText(pageLink); setCopied(true); window.setTimeout(() => setCopied(false), 1500); }} icon={copied ? <Check size={17} /> : <Copy size={17} />}>{copied ? t("Copied") : t("Copy link")}</Button><ButtonLink to={`/b/${businessInfo.slug}`} target="_blank" rel="noopener noreferrer" variant="white" className="flex-1 sm:flex-none" icon={<Eye size={17} />}>{t("View page")}</ButtonLink></div></div></Card>
     {(analyticsError || requestsError) && <div className="mt-5 space-y-2"><ErrorNotice message={analyticsReason instanceof Error ? analyticsReason.message : "Analytics could not be loaded"} />{requestsError && <ErrorNotice message={requestsReason instanceof Error ? requestsReason.message : "Requests could not be loaded"} />}</div>}
-    <div className="mt-8 grid grid-cols-2 gap-4 lg:grid-cols-4"><Stat label={t("Page views")} value={analyticsLoading ? "—" : (analytics?.pageViews ?? 0).toLocaleString()} icon={<Eye size={18} />} /><Stat label={t("Customer requests")} value={analyticsLoading ? "—" : String(analytics?.requests ?? 0)} icon={<FileText size={18} />} /><Stat label={t("Quotes sent")} value={analyticsLoading ? "—" : String(analytics?.quotes ?? 0)} icon={<Send size={18} />} /><Stat label={t("Accepted quote value")} value={analyticsLoading ? "—" : money(analytics?.quoteValue ?? 0)} icon={<TrendingUp size={18} />} /></div>
+    <div className="mt-8 grid grid-cols-2 gap-4 lg:grid-cols-4"><Stat label={t("Page views")} value={analyticsLoading ? "—" : (analytics?.pageViews ?? 0).toLocaleString()} icon={<Eye size={18} />} />{canRequests && <><Stat label={t("Customer requests")} value={analyticsLoading ? "—" : String(analytics?.requests ?? 0)} icon={<FileText size={18} />} /><Stat label={t("Quotes sent")} value={analyticsLoading ? "—" : String(analytics?.quotes ?? 0)} icon={<Send size={18} />} /><Stat label={t("Accepted quote value")} value={analyticsLoading ? "—" : money(analytics?.quoteValue ?? 0)} icon={<TrendingUp size={18} />} /></>}</div>
+    {(canOrders || canBookings) && <div className="mt-6 grid gap-4 sm:grid-cols-2">
+      {canOrders && <Card className="flex items-center justify-between gap-4 p-5"><div><p className="text-xs font-bold uppercase tracking-wide text-muted">{t("Orders to handle")}</p><p className="mt-1 font-display text-2xl font-bold">{orderSummary ? (orderSummary.pending + orderSummary.processing + orderSummary.ready).toLocaleString() : "—"}</p><p className="mt-1 text-xs text-muted">{orderSummary ? `${orderSummary.completed.toLocaleString()} ${t("completed")}` : t("Loading orders…")}</p></div><ButtonLink to="/dashboard/orders" variant="secondary" icon={<ArrowRight size={16} />}>{t("Open orders")}</ButtonLink></Card>}
+      {canBookings && <Card className="flex items-center justify-between gap-4 p-5"><div><p className="text-xs font-bold uppercase tracking-wide text-muted">{t("Appointments")}</p><p className="mt-1 font-display text-2xl font-bold">{bookingSummary ? (bookingSummary.pending + bookingSummary.confirmed).toLocaleString() : "—"}</p><p className="mt-1 text-xs text-muted">{bookingSummary ? `${bookingSummary.today.toLocaleString()} ${t("today")}` : t("Loading bookings…")}</p></div><ButtonLink to="/dashboard/bookings" variant="secondary" icon={<ArrowRight size={16} />}>{t("Open bookings")}</ButtonLink></Card>}
+    </div>}
     <div className="mt-8 grid min-w-0 gap-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(18rem,1fr)]">
       <Card className="min-w-0 p-5 sm:p-6"><div className="flex items-center justify-between"><div><p className="font-display text-lg font-bold">{t("Conversion journey")}</p><p className="text-xs text-muted">{t("From page view to accepted quote")}</p></div></div><div className="mt-8 space-y-3">{(["visitors", "actions", "requests", "quotes", "acceptedQuotes"] as const).map((key, index) => { const labels = ["Visitors", "Actions", "Requests", "Quotes", "Accepted"]; const value = analytics?.funnel[key] ?? 0; const max = Math.max(analytics?.funnel.visitors ?? 0, 1); const width = Math.max(12, (value / max) * 100); return <div key={key} className="flex min-w-0 items-center gap-3"><span className="w-[4.5rem] shrink-0 text-xs text-muted sm:w-24 sm:text-sm">{t(labels[index] ?? "Visitors")}</span><div className="h-10 min-w-0 flex-1 overflow-hidden rounded-lg bg-[#f0f4ef]"><div className="h-full min-w-12 rounded-lg bg-violet-soft transition-all" style={{ width: `${Math.min(width, 100)}%` }}><span className="flex h-full items-center px-3 text-sm font-bold text-violet">{analyticsLoading ? "…" : value.toLocaleString()}</span></div></div></div>; })}</div></Card>
       <Card className="min-w-0 p-5 sm:p-6"><div className="flex items-center justify-between"><p className="font-display text-lg font-bold">{t("Customer actions")}</p><Sparkles size={18} className="text-violet" /></div><div className="mt-5 space-y-4">{([[MessageCircle, "WhatsApp clicks", analytics?.whatsappClicks ?? 0], [Phone, "Calls", analytics?.phoneClicks ?? 0], [Compass, "Directions", analytics?.directionsClicks ?? 0]] as Array<[LucideIcon, string, number]>).map(([Icon, label, value]) => <div key={label} className="flex min-w-0 items-center gap-3"><span className="icon-tile shrink-0"><Icon size={17} /></span><div className="min-w-0 flex-1"><div className="flex flex-wrap justify-between gap-x-2 text-sm"><strong>{t(label)}</strong><span>{analyticsLoading ? "…" : value}</span></div></div></div>)}</div></Card>
     </div>
-    <Card className="mt-8 overflow-hidden"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-line p-4 sm:p-5"><div><p className="font-display font-bold">{t("Recent requests")}</p><p className="text-xs text-muted">{t("Customers waiting for your response")}</p></div><ButtonLink to="/dashboard/requests" variant="ghost">{t("View all")} <ArrowRight size={15} /></ButtonLink></div><RequestTable requests={requests ?? []} compact={true} loading={requestsLoading} /></Card>
+    {canRequests && <Card className="mt-8 overflow-hidden"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-line p-4 sm:p-5"><div><p className="font-display font-bold">{t("Recent requests")}</p><p className="text-xs text-muted">{t("Customers waiting for your response")}</p></div><ButtonLink to="/dashboard/requests" variant="ghost">{t("View all")} <ArrowRight size={15} /></ButtonLink></div><RequestTable requests={requests ?? []} compact={true} loading={requestsLoading} /></Card>}
   </div>;
 }
 
@@ -680,35 +751,210 @@ export function ResourcePage({ type }: { type: ResourceType }) {
   </div>;
 }
 
+type EditorSectionKey = "basics" | "contact" | "description" | "location" | "images" | "details" | "socials";
+
+const editorSections: Array<{ key: EditorSectionKey; label: string; hint: string; completion?: ProfileSectionKey }> = [
+  { key: "basics", label: "Basics", hint: "Your business name and the type customers see.", completion: "identity" },
+  { key: "contact", label: "Contact", hint: "How customers can reach you.", completion: "contact" },
+  { key: "description", label: "Description", hint: "Tell customers what you offer and what makes you different.", completion: "description" },
+  { key: "location", label: "Location", hint: "Where customers can find you or the area you serve.", completion: "location" },
+  { key: "images", label: "Logo & cover", hint: "Images customers see first on your public page.", completion: "images" },
+  { key: "details", label: "Business details", hint: "Extra details for your business type.", completion: "details" },
+  { key: "socials", label: "Links & preferences", hint: "Website, social links, language and currency." },
+];
+
 function SettingsLike({ title, description, custom }: { title: string; description: string; custom: boolean }) {
+  const { t } = useLanguage();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedSection = searchParams.get("section");
+  const activeSection = editorSections.find((section) => section.key === requestedSection)?.key ?? "basics";
+  const { data: user } = useCurrentUser();
+  const businessInfo = user?.business;
+  const businessId = businessInfo?.id;
+  const queryClient = useQueryClient();
+  const { data: business, isLoading, isError, error } = useQuery<BusinessSetup>({
+    queryKey: queryKeys.business(businessId ?? ""),
+    queryFn: () => businessService.get<BusinessSetup>(businessId!),
+    enabled: Boolean(businessId),
+  });
+  const { data: catalog } = useBusinessCatalog<BusinessCatalog>();
+  const { data: completion } = useProfileCompletion<ProfileCompletion>(businessId);
+  const [values, setValues] = useState({ name: businessInfo?.name ?? "", category: businessInfo?.category ?? "", subtype: "", email: "", description: "", tagline: "", phone: "", whatsapp: "", city: "", address: "", openingHours: "", logoUrl: "", coverImageUrl: "", websiteUrl: "", instagram: "", facebook: "", preferredLanguage: "en", currency: "RWF", profileData: {} as Record<string, unknown> });
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    if (!business || loaded) return;
+    setValues({
+      name: business.name,
+      category: business.category,
+      subtype: business.subtype,
+      email: business.email ?? "",
+      description: business.description,
+      tagline: business.tagline ?? "",
+      phone: business.phone ?? "",
+      whatsapp: business.whatsapp ?? "",
+      city: business.city ?? "",
+      address: business.address ?? "",
+      openingHours: business.openingHours?.display ?? "",
+      logoUrl: business.logoUrl ?? "",
+      coverImageUrl: business.coverImageUrl ?? "",
+      websiteUrl: business.websiteUrl ?? "",
+      instagram: business.socialLinks?.instagram ?? "",
+      facebook: business.socialLinks?.facebook ?? "",
+      preferredLanguage: business.preferredLanguage ?? "en",
+      currency: business.currency ?? "RWF",
+      profileData: business.profileData ?? {},
+    });
+    setLoaded(true);
+  }, [business, loaded]);
+  const industry = catalog?.industries.find((item) => item.key === business?.industryKey);
+  const profileFields = industry?.profileFields ?? [];
+  const mutation = useMutation({
+    mutationFn: () => businessService.update(businessId!, {
+      name: values.name.trim(),
+      category: values.category,
+      subtype: values.subtype,
+      description: values.description.trim(),
+      tagline: values.tagline.trim(),
+      email: values.email.trim() || null,
+      phone: values.phone.trim() || null,
+      whatsapp: values.whatsapp.trim() || null,
+      city: values.city.trim() || null,
+      address: values.address.trim() || null,
+      logoUrl: values.logoUrl || null,
+      coverImageUrl: values.coverImageUrl || null,
+      websiteUrl: values.websiteUrl.trim() || null,
+      socialLinks: {
+        ...(values.instagram.trim() ? { instagram: values.instagram.trim() } : {}),
+        ...(values.facebook.trim() ? { facebook: values.facebook.trim() } : {}),
+      },
+      preferredLanguage: values.preferredLanguage,
+      currency: values.currency,
+      openingHours: values.openingHours.trim() ? { display: values.openingHours.trim() } : null,
+      profileData: values.profileData,
+    }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.business(businessId!) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.profileCompletion(businessId!) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.currentUser });
+    },
+  });
+  const setProfileValue = (field: ProfileField, value: unknown) => setValues((current) => ({ ...current, profileData: { ...current.profileData, [field.key]: value } }));
+  const selectSection = (key: EditorSectionKey) => {
+    const next = new URLSearchParams(searchParams);
+    next.set("section", key);
+    setSearchParams(next, { replace: true });
+  };
+  const section = editorSections.find((item) => item.key === activeSection) ?? editorSections[0]!;
+  if (isLoading) return <p className="p-6 text-muted">{t("Loading business information…")}</p>;
+  return <div className="mx-auto max-w-6xl">
+    <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+      <div><Heading as="h1">{t(title)}</Heading><p className="mt-2 text-muted">{t(description)}</p></div>
+      <div className="flex flex-wrap items-center gap-2"><ButtonLink to={`/b/${businessInfo?.slug ?? ""}`} target="_blank" rel="noopener noreferrer" variant="secondary">{t("View public page")}</ButtonLink><PublishControl businessId={businessId} published={business?.isPublished ?? businessInfo?.isPublished ?? false} /></div>
+    </div>
+    {isError && <div className="mt-5"><ErrorNotice message={error.message} /></div>}
+    <Card className="mt-6 p-5 sm:p-6">
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><p className="font-display text-lg font-bold">{t("Profile completion")}</p><p className="mt-1 text-sm text-muted">{t("Only saved information counts. Operational setup is managed separately.")}</p></div><strong className="font-display text-3xl font-bold">{completion?.percentage ?? 0}%</strong></div>
+      <div className="mt-4 h-2 overflow-hidden rounded-full bg-[#eef1eb]"><div className="h-full rounded-full bg-success transition-all" style={{ width: `${completion?.percentage ?? 0}%` }} /></div>
+      <div className="mt-5 flex flex-wrap gap-2">{editorSections.filter((item) => item.completion).map((item) => {
+        const itemCompletion = completion?.sections.find((entry) => entry.key === item.completion);
+        return <button key={item.key} type="button" onClick={() => selectSection(item.key)} className={`rounded-full border px-3 py-1.5 text-xs font-bold transition ${activeSection === item.key ? "border-violet bg-violet text-white" : "border-line bg-white text-ink hover:border-violet"}`}>{t(item.label)} · {itemCompletion?.percentage ?? 0}%</button>;
+      })}</div>
+    </Card>
+    <div className="mt-6 grid gap-6 lg:grid-cols-[17rem_minmax(0,1fr)]">
+      <Card className="h-fit p-3">
+        <nav className="grid gap-1" aria-label={t("Business page sections")}>{editorSections.map((item) => {
+          const itemCompletion = item.completion ? completion?.sections.find((entry) => entry.key === item.completion) : undefined;
+          return <button key={item.key} type="button" onClick={() => selectSection(item.key)} className={`flex items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition ${activeSection === item.key ? "bg-violet-soft text-violet" : "text-ink hover:bg-[#faf9f6]"}`}><span>{t(item.label)}</span>{itemCompletion && <span className={`text-[11px] font-bold ${itemCompletion.percentage === 100 ? "text-success" : "text-muted"}`}>{itemCompletion.percentage}%</span>}</button>;
+        })}</nav>
+      </Card>
+      <Card className="p-5 sm:p-6">
+        <div className="flex items-start justify-between gap-4"><div><p className="font-display text-lg font-bold">{t(section.label)}</p><p className="mt-1 text-sm text-muted">{t(section.hint)}</p></div>{section.completion && <Badge tone={completion?.sections.find((entry) => entry.key === section.completion)?.percentage === 100 ? "success" : "neutral"}>{completion?.sections.find((entry) => entry.key === section.completion)?.percentage ?? 0}%</Badge>}</div>
+        <div className="mt-5 grid gap-4 sm:grid-cols-2">
+          {activeSection === "basics" && <>
+            <div><Label htmlFor="setting-name">{t("Business name")}</Label><Input id="setting-name" value={values.name} onChange={(event) => setValues({ ...values, name: event.target.value })} /></div>
+            <div><Label htmlFor="setting-type">{t("Business type")}</Label><Input id="setting-type" value={industry?.label ?? business?.category ?? ""} readOnly className="bg-[#faf9f6]" /></div>
+            <div className="sm:col-span-2"><Label htmlFor="setting-subtype">{t("Specialty")}</Label>{industry?.subtypes.length ? <Select id="setting-subtype" value={values.subtype} onChange={(event) => setValues({ ...values, subtype: event.target.value })}>{industry.subtypes.map((subtype) => <option key={subtype.key} value={subtype.key}>{subtype.label}</option>)}</Select> : <Input id="setting-subtype" value={values.subtype} onChange={(event) => setValues({ ...values, subtype: event.target.value })} />}</div>
+          </>}
+          {activeSection === "contact" && <>
+            <div><Label htmlFor="setting-email">{t("Business email")}</Label><Input id="setting-email" type="email" value={values.email} onChange={(event) => setValues({ ...values, email: event.target.value })} /></div>
+            <div><Label htmlFor="setting-phone">{t("Phone")}</Label><Input id="setting-phone" type="tel" value={values.phone} onChange={(event) => setValues({ ...values, phone: event.target.value })} /></div>
+            <div className="sm:col-span-2"><Label htmlFor="setting-whatsapp">{t("WhatsApp number")}</Label><Input id="setting-whatsapp" type="tel" value={values.whatsapp} onChange={(event) => setValues({ ...values, whatsapp: event.target.value })} placeholder="+250 78..." /></div>
+          </>}
+          {activeSection === "description" && <>
+            <div className="sm:col-span-2"><Label htmlFor="setting-tagline">{t("Tagline")}</Label><Input id="setting-tagline" value={values.tagline} onChange={(event) => setValues({ ...values, tagline: event.target.value })} maxLength={180} placeholder={t("A short line customers see first")} /></div>
+            <div className="sm:col-span-2"><Label htmlFor="setting-description">{t("Description")}</Label><Textarea id="setting-description" rows={6} value={values.description} onChange={(event) => setValues({ ...values, description: event.target.value })} placeholder={t("What do you offer? Who do you serve? What makes you different?")} /></div>
+          </>}
+          {activeSection === "location" && <>
+            <div><Label htmlFor="setting-city">{t("City")}</Label><Input id="setting-city" value={values.city} onChange={(event) => setValues({ ...values, city: event.target.value })} /></div>
+            <div><Label htmlFor="setting-address">{t("Address")}</Label><Input id="setting-address" value={values.address} onChange={(event) => setValues({ ...values, address: event.target.value })} /></div>
+            <div className="sm:col-span-2"><Label htmlFor="setting-hours">{t("Opening hours")}</Label><Input id="setting-hours" value={values.openingHours} onChange={(event) => setValues({ ...values, openingHours: event.target.value })} placeholder={t("e.g. Mon–Sat, 8:00–18:00")} /></div>
+          </>}
+          {activeSection === "images" && <>
+            <div className="sm:col-span-2"><ImageUploadField title={t("Logo")} description={t("A square logo works best. JPEG, PNG, WebP or GIF · up to 8 MB.")} value={values.logoUrl} onChange={(logoUrl) => setValues({ ...values, logoUrl })} /></div>
+            <div className="sm:col-span-2"><ImageUploadField title={t("Cover image")} description={t("A wide image for the top of your public page. JPEG, PNG, WebP or GIF · up to 8 MB.")} value={values.coverImageUrl} onChange={(coverImageUrl) => setValues({ ...values, coverImageUrl })} /></div>
+          </>}
+          {activeSection === "details" && (profileFields.length ? profileFields.map((field) => <ProfileFieldInput key={field.key} field={field} value={values.profileData[field.key]} onChange={(value) => setProfileValue(field, value)} />) : <p className="sm:col-span-2 text-sm text-muted">{t("This business type has no extra profile details.")}</p>)}
+          {activeSection === "socials" && <>
+            <div className="sm:col-span-2"><Label htmlFor="setting-website">{t("Website")}</Label><Input id="setting-website" type="url" value={values.websiteUrl} onChange={(event) => setValues({ ...values, websiteUrl: event.target.value })} placeholder="https://" /></div>
+            <div><Label htmlFor="setting-instagram">{t("Instagram")}</Label><Input id="setting-instagram" value={values.instagram} onChange={(event) => setValues({ ...values, instagram: event.target.value })} /></div>
+            <div><Label htmlFor="setting-facebook">{t("Facebook")}</Label><Input id="setting-facebook" value={values.facebook} onChange={(event) => setValues({ ...values, facebook: event.target.value })} /></div>
+            <div><Label htmlFor="setting-language">{t("Preferred language")}</Label><Select id="setting-language" value={values.preferredLanguage} onChange={(event) => setValues({ ...values, preferredLanguage: event.target.value })}><option value="en">English</option><option value="rw">Kinyarwanda</option><option value="fr">Français</option></Select></div>
+            <div><Label htmlFor="setting-currency">{t("Currency")}</Label><Select id="setting-currency" value={values.currency} onChange={(event) => setValues({ ...values, currency: event.target.value })}><option value="RWF">RWF</option><option value="USD">USD</option><option value="EUR">EUR</option></Select></div>
+          </>}
+        </div>
+        {mutation.isError && <div className="mt-4"><ErrorNotice message={mutation.error.message} /></div>}
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-5"><p className="text-xs text-muted">{t("Changes apply to your public page after saving.")}</p><div className="flex items-center gap-3">{mutation.isSuccess && <span className="text-sm font-semibold text-success">{t("Saved")}</span>}<Button loading={mutation.isPending} disabled={mutation.isPending || !values.name.trim()} onClick={() => mutation.mutate()}>{t("Save changes")}</Button></div></div>
+      </Card>
+    </div>
+  </div>;
+}
+
+function LegacySettingsLike({ title, description, custom }: { title: string; description: string; custom: boolean }) {
   const { t } = useLanguage();
   const { data: user } = useCurrentUser();
   const businessInfo = user?.business;
   const queryClient = useQueryClient();
-  const [values, setValues] = useState({ name: businessInfo?.name ?? "", category: businessInfo?.category ?? "", email: "", description: "", phone: "", city: "", address: "" });
+  const [values, setValues] = useState({ name: businessInfo?.name ?? "", category: businessInfo?.category ?? "", email: "", description: "", tagline: "", phone: "", whatsapp: "", city: "", address: "", openingHours: "", logoUrl: "", coverImageUrl: "", websiteUrl: "", instagram: "", facebook: "", preferredLanguage: "en", currency: "RWF" });
   const [loaded, setLoaded] = useState(false);
-  const { data: business, isLoading, isError, error } = useQuery<{ name: string; category: string; description: string; email: string | null; phone: string | null; city: string | null; address: string | null }>({
+  const { data: business, isLoading, isError, error } = useQuery<{ name: string; category: string; description: string; tagline: string; email: string | null; phone: string | null; whatsapp: string | null; city: string | null; address: string | null; openingHours: { display?: string } | null; logoUrl: string | null; coverImageUrl: string | null; websiteUrl?: string | null; socialLinks?: Record<string, string> | null; preferredLanguage?: string; currency?: string }>({
     queryKey: queryKeys.business(businessInfo?.id ?? ""),
     queryFn: () => businessService.get(businessInfo!.id),
     enabled: Boolean(businessInfo?.id),
   });
   useEffect(() => {
     if (!business || loaded) return;
-    setValues({ name: business.name, category: business.category, email: business.email ?? "", description: business.description, phone: business.phone ?? "", city: business.city ?? "", address: business.address ?? "" });
+    setValues({ name: business.name, category: business.category, email: business.email ?? "", description: business.description, tagline: business.tagline ?? "", phone: business.phone ?? "", whatsapp: business.whatsapp ?? "", city: business.city ?? "", address: business.address ?? "", openingHours: business.openingHours?.display ?? "", logoUrl: business.logoUrl ?? "", coverImageUrl: business.coverImageUrl ?? "", websiteUrl: business.websiteUrl ?? "", instagram: business.socialLinks?.instagram ?? "", facebook: business.socialLinks?.facebook ?? "", preferredLanguage: business.preferredLanguage ?? "en", currency: business.currency ?? "RWF" });
     setLoaded(true);
   }, [business, loaded]);
   const mutation = useMutation({
-    mutationFn: () => businessService.update(businessInfo!.id, values),
+    mutationFn: () => businessService.update(businessInfo!.id, {
+      ...values,
+      email: values.email.trim() || null,
+      phone: values.phone.trim() || null,
+      whatsapp: values.whatsapp.trim() || null,
+      city: values.city.trim() || null,
+      address: values.address.trim() || null,
+      logoUrl: values.logoUrl || null,
+      coverImageUrl: values.coverImageUrl || null,
+      websiteUrl: values.websiteUrl.trim() || null,
+      socialLinks: {
+        ...(values.instagram.trim() ? { instagram: values.instagram.trim() } : {}),
+        ...(values.facebook.trim() ? { facebook: values.facebook.trim() } : {}),
+      },
+      preferredLanguage: values.preferredLanguage,
+      currency: values.currency,
+      openingHours: values.openingHours.trim() ? { display: values.openingHours.trim() } : null,
+    }),
     onSuccess: () => { void queryClient.invalidateQueries({ queryKey: queryKeys.business(businessInfo!.id) }); void queryClient.invalidateQueries({ queryKey: queryKeys.currentUser }); },
   });
   if (isLoading) return <p className="p-6 text-muted">{t("Loading business information…")}</p>;
-  return <div className="mx-auto max-w-6xl"><Heading as="h1">{title}</Heading><p className="mt-2 text-muted">{description}</p>{isError && <div className="mt-5"><ErrorNotice message={error.message} /></div>}<div className="mt-8 grid gap-6 lg:grid-cols-[1fr_20rem]"><Card className="p-6"><div className="grid gap-5 sm:grid-cols-2"><div><Label htmlFor="setting-name">{t("Business name")}</Label><Input id="setting-name" value={values.name} onChange={(event) => setValues({ ...values, name: event.target.value })} /></div><div><Label htmlFor="setting-category">{t("Category")}</Label><Input id="setting-category" value={values.category} onChange={(event) => setValues({ ...values, category: event.target.value })} /></div><div><Label htmlFor="setting-email">{t("Business email")}</Label><Input id="setting-email" type="email" value={values.email} onChange={(event) => setValues({ ...values, email: event.target.value })} /></div><div><Label htmlFor="setting-phone">{t("Phone")}</Label><Input id="setting-phone" type="tel" value={values.phone} onChange={(event) => setValues({ ...values, phone: event.target.value })} /></div><div><Label htmlFor="setting-city">{t("City")}</Label><Input id="setting-city" value={values.city} onChange={(event) => setValues({ ...values, city: event.target.value })} /></div><div><Label htmlFor="setting-address">{t("Address")}</Label><Input id="setting-address" value={values.address} onChange={(event) => setValues({ ...values, address: event.target.value })} /></div><div className="sm:col-span-2"><Label htmlFor="setting-description">{t("Description")}</Label><Textarea id="setting-description" value={values.description} onChange={(event) => setValues({ ...values, description: event.target.value })} /></div></div>{mutation.isError && <div className="mt-4"><ErrorNotice message={mutation.error.message} /></div>}{mutation.isSuccess && <p className="mt-4 text-sm font-semibold text-success">{t("Business information saved.")}</p>}<Button className="mt-6" loading={mutation.isPending} disabled={mutation.isPending} onClick={() => mutation.mutate()}>{t("Save changes")}</Button></Card><Card className="h-fit p-5"><p className="font-display font-bold">{t(custom ? "Page publishing" : "Workspace")}</p><p className="mt-2 text-sm text-muted">{custom ? t("Publish or unpublish the public business page.") : `${t("Owner access")} · ${business?.name ?? t("Business")}`}</p>{custom && <PublishControl businessId={businessInfo?.id} published={businessInfo?.isPublished ?? false} />}</Card></div></div>;
+  return <div className="mx-auto max-w-6xl"><Heading as="h1">{title}</Heading><p className="mt-2 text-muted">{description}</p>{isError && <div className="mt-5"><ErrorNotice message={error.message} /></div>}<div className="mt-8 grid gap-6 lg:grid-cols-[1fr_20rem]"><Card className="p-6"><div className="grid gap-5 sm:grid-cols-2"><div><Label htmlFor="setting-name">{t("Business name")}</Label><Input id="setting-name" value={values.name} onChange={(event) => setValues({ ...values, name: event.target.value })} /></div><div><Label htmlFor="setting-category">{t("Category")}</Label><Input id="setting-category" value={values.category} onChange={(event) => setValues({ ...values, category: event.target.value })} /></div><div className="sm:col-span-2"><Label htmlFor="setting-tagline">{t("Tagline")}</Label><Input id="setting-tagline" value={values.tagline} onChange={(event) => setValues({ ...values, tagline: event.target.value })} maxLength={180} placeholder={t("A short line customers see first")} /></div><div><Label htmlFor="setting-email">{t("Business email")}</Label><Input id="setting-email" type="email" value={values.email} onChange={(event) => setValues({ ...values, email: event.target.value })} /></div><div><Label htmlFor="setting-phone">{t("Phone")}</Label><Input id="setting-phone" type="tel" value={values.phone} onChange={(event) => setValues({ ...values, phone: event.target.value })} /></div><div><Label htmlFor="setting-whatsapp">{t("WhatsApp number")}</Label><Input id="setting-whatsapp" type="tel" value={values.whatsapp} onChange={(event) => setValues({ ...values, whatsapp: event.target.value })} placeholder="+250 78..." /></div><div className="sm:col-span-2"><Label htmlFor="setting-website">{t("Website")}</Label><Input id="setting-website" type="url" value={values.websiteUrl} onChange={(event) => setValues({ ...values, websiteUrl: event.target.value })} placeholder="https://" /></div><div><Label htmlFor="setting-instagram">{t("Instagram")}</Label><Input id="setting-instagram" value={values.instagram} onChange={(event) => setValues({ ...values, instagram: event.target.value })} placeholder="https://instagram.com/..." /></div><div><Label htmlFor="setting-facebook">{t("Facebook")}</Label><Input id="setting-facebook" value={values.facebook} onChange={(event) => setValues({ ...values, facebook: event.target.value })} placeholder="https://facebook.com/..." /></div><div><Label htmlFor="setting-language">{t("Preferred language")}</Label><Select id="setting-language" value={values.preferredLanguage} onChange={(event) => setValues({ ...values, preferredLanguage: event.target.value })}><option value="en">English</option><option value="fr">Français</option><option value="rw">Kinyarwanda</option></Select></div><div><Label htmlFor="setting-currency">{t("Currency")}</Label><Input id="setting-currency" value={values.currency} onChange={(event) => setValues({ ...values, currency: event.target.value })} maxLength={8} /></div><div><Label htmlFor="setting-opening-hours">{t("Opening hours")}</Label><Input id="setting-opening-hours" value={values.openingHours} onChange={(event) => setValues({ ...values, openingHours: event.target.value })} maxLength={200} placeholder={t("Mon–Sat, 8:00–18:00")} /></div><div><Label htmlFor="setting-city">{t("City")}</Label><Input id="setting-city" value={values.city} onChange={(event) => setValues({ ...values, city: event.target.value })} /></div><div><Label htmlFor="setting-address">{t("Address")}</Label><Input id="setting-address" value={values.address} onChange={(event) => setValues({ ...values, address: event.target.value })} /></div><div className="sm:col-span-2"><Label htmlFor="setting-description">{t("Description")}</Label><Textarea id="setting-description" value={values.description} onChange={(event) => setValues({ ...values, description: event.target.value })} /></div><div className="sm:col-span-2"><ImageUploadField title={t("Logo")} description={t("Square logo shown beside your business name.")} value={values.logoUrl} onChange={(logoUrl) => setValues({ ...values, logoUrl })} /></div><div className="sm:col-span-2"><ImageUploadField title={t("Cover image")} description={t("Wide image used at the top of your public page and when sharing links.")} value={values.coverImageUrl} onChange={(coverImageUrl) => setValues({ ...values, coverImageUrl })} /></div></div>{mutation.isError && <div className="mt-4"><ErrorNotice message={mutation.error.message} /></div>}{mutation.isSuccess && <p className="mt-4 text-sm font-semibold text-success">{t("Business information saved.")}</p>}<Button className="mt-6" loading={mutation.isPending} disabled={mutation.isPending} onClick={() => mutation.mutate()}>{t("Save changes")}</Button></Card><Card className="h-fit p-5"><p className="font-display font-bold">{t(custom ? "Page publishing" : "Workspace")}</p><p className="mt-2 text-sm text-muted">{custom ? t("Publish or unpublish the public business page.") : `${t("Owner access")} · ${business?.name ?? t("Business")}`}</p><Link className="mt-3 inline-flex items-center gap-1 text-sm font-bold text-[#075b43]" to="/onboarding">{t("Edit industry & features")} <ArrowRight size={14} /></Link>{custom && <PublishControl businessId={businessInfo?.id} published={businessInfo?.isPublished ?? false} />}</Card></div></div>;
 }
 
 function PublishControl({ businessId, published }: { businessId: string | undefined; published: boolean }) {
   const { t } = useLanguage();
   const client = useQueryClient();
-  const mutation = useMutation({ mutationFn: () => businessService.publish(businessId!, !published), onSuccess: () => { void client.invalidateQueries({ queryKey: queryKeys.currentUser }); } });
+  const mutation = useMutation({ mutationFn: () => businessService.publish(businessId!, !published), onSuccess: () => { void client.invalidateQueries({ queryKey: queryKeys.currentUser }); if (businessId) void client.invalidateQueries({ queryKey: queryKeys.business(businessId) }); } });
   return <div className="mt-5"><Button variant={published ? "secondary" : "primary"} disabled={!businessId || mutation.isPending} loading={mutation.isPending} onClick={() => mutation.mutate()}>{published ? t("Unpublish page") : t("Publish page")}</Button>{mutation.isError && <div className="mt-3"><ErrorNotice message={mutation.error.message} /></div>}</div>;
 }
 

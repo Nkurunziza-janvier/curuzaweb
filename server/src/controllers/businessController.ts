@@ -2,10 +2,12 @@ import { DiscountType, Prisma } from "@prisma/client";
 import { randomBytes } from "node:crypto";
 import type { Request } from "express";
 import { prisma } from "../config/prisma.js";
+import { availableCapabilityKeys, businessCatalog, capabilityError, findIndustryForCategory, getIndustry, getSubtype, normalizeCapabilities, publicIndustry, validateProfileData } from "../config/businessCatalog.js";
+import { calculateProfileCompletion, publicProfileDetails } from "../config/profileCompletion.js";
 import { createDefaultTemplate } from "../services/templates.js";
 import { storageService } from "../services/storage.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
-import { badRequest, forbidden, notFound, unauthorized } from "../utils/errors.js";
+import { badRequest, conflict, forbidden, notFound, unauthorized } from "../utils/errors.js";
 import { success } from "../utils/responses.js";
 import { getParam } from "../utils/requestParam.js";
 import { businessSchema, offerSchema, offerUpdateSchema, productSchema, serviceSchema, templateSchema } from "../validators/schemas.js";
@@ -14,6 +16,23 @@ import { z } from "zod";
 const zCreateBusiness = z.object({
   name: z.string().trim().min(2).max(120),
   category: z.string().trim().max(80).optional(),
+  industryKey: z.string().trim().max(80).optional(),
+  subtype: z.string().trim().max(80).optional(),
+});
+
+function effectiveCapabilities(capabilities: string[]) {
+  return new Set<string>(capabilities.length ? capabilities : availableCapabilityKeys);
+}
+
+function validSubtype(industryKey: string, subtype: string) {
+  return industryKey === "other" ? Boolean(subtype.trim()) : Boolean(getSubtype(industryKey, subtype));
+}
+
+export const getBusinessCatalog = asyncHandler(async (_request, response) => {
+  return success(response, {
+    industries: businessCatalog.industries.map(publicIndustry),
+    capabilities: businessCatalog.capabilities,
+  });
 });
 
 function slugify(name: string) {
@@ -50,7 +69,23 @@ export const createBusiness = asyncHandler(async (request, response) => {
   if (existing && request.user.role !== "ADMIN") throw badRequest("This account already has a business");
   let slug = slugify(input.name) || "business";
   if (await prisma.business.findUnique({ where: { slug }, select: { id: true } })) slug = `${slug}-${randomBytes(3).toString("hex")}`;
-  const business = await prisma.business.create({ data: { ...input, name: input.name, slug, ownerId: request.user.id } });
+  const industry = getIndustry(input.industryKey) ?? findIndustryForCategory(input.category);
+  const subtype = industry.key === "other" && input.subtype?.trim()
+    ? { key: input.subtype.trim(), label: input.subtype.trim() }
+    : getSubtype(industry.key, input.subtype) ?? industry.subtypes[0]!;
+  const category = input.category?.trim() || subtype.label;
+  const business = await prisma.business.create({
+    data: {
+      name: input.name,
+      category,
+      industryKey: industry.key,
+      subtype: subtype.key,
+      capabilities: industry.recommended,
+      profileData: {},
+      slug,
+      ownerId: request.user.id,
+    },
+  });
   await createDefaultTemplate(business.id, business.category);
   return success(response, business, 201);
 });
@@ -61,12 +96,91 @@ export const getBusiness = asyncHandler(async (request, response) => {
   return success(response, business);
 });
 
-export const updateBusiness = asyncHandler(async (request, response) => {
-  const input = businessSchema.parse(request.body);
-  const business = await prisma.business.update({
+export const getProfileCompletion = asyncHandler(async (request, response) => {
+  const business = await prisma.business.findUnique({
     where: { id: getParam(request, "businessId") },
-    data: { ...input, openingHours: input.openingHours === undefined ? undefined : input.openingHours === null ? Prisma.DbNull : input.openingHours as Prisma.InputJsonValue },
+    select: {
+      name: true,
+      industryKey: true,
+      subtype: true,
+      description: true,
+      phone: true,
+      whatsapp: true,
+      email: true,
+      city: true,
+      address: true,
+      logoUrl: true,
+      coverImageUrl: true,
+      profileData: true,
+    },
   });
+  if (!business) throw notFound("Business not found");
+  return success(response, calculateProfileCompletion(business));
+});
+
+export const updateBusiness = asyncHandler(async (request, response) => {
+  const { confirmCapabilityChanges, ...input } = businessSchema.parse(request.body);
+  const businessId = getParam(request, "businessId");
+  const existing = await prisma.business.findUnique({ where: { id: businessId } });
+  if (!existing) throw notFound("Business not found");
+
+  const industryKey = input.industryKey ?? existing.industryKey;
+  const industry = getIndustry(industryKey);
+  if (!industry) throw badRequest("Choose a valid business industry");
+  const subtypeKey = input.subtype ?? existing.subtype;
+  if (!validSubtype(industryKey, subtypeKey)) throw badRequest("Choose a business subtype that matches your industry");
+
+  let capabilities: string[] | undefined = input.capabilities;
+  if (capabilities === undefined && input.industryKey && input.industryKey !== existing.industryKey) {
+    capabilities = industry.recommended;
+  }
+  if (capabilities !== undefined) {
+    const available = new Set<string>(availableCapabilityKeys);
+    const unknown = capabilities.find((capability) => !available.has(capability));
+    if (unknown) throw badRequest(`The capability "${unknown}" is not available yet`);
+    capabilities = normalizeCapabilities(capabilities, industryKey);
+    const error = capabilityError(capabilities, industryKey);
+    if (error) throw badRequest(error);
+    const removed = existing.capabilities.filter((capability) => !capabilities!.includes(capability));
+    if (removed.length && !confirmCapabilityChanges) {
+      const [products, services, orders, bookings, requests, reviews] = await Promise.all([
+        prisma.product.count({ where: { businessId } }),
+        prisma.service.count({ where: { businessId } }),
+        prisma.order.count({ where: { businessId } }),
+        prisma.booking.count({ where: { businessId } }),
+        prisma.customerRequest.count({ where: { businessId } }),
+        prisma.review.count({ where: { businessId } }),
+      ]);
+      const recordsByCapability: Record<string, number> = {
+        products,
+        services,
+        product_orders: orders,
+        appointments: bookings,
+        service_requests: requests,
+        contact_form: requests,
+        reviews,
+      };
+      const affected = removed.filter((capability) => (recordsByCapability[capability] ?? 0) > 0);
+      if (affected.length) {
+        throw conflict(`Disabling ${affected.join(", ")} will hide existing records without deleting them. Confirm the change to continue.`);
+      }
+    }
+  }
+  const profileData = input.profileData === undefined ? existing.profileData : input.profileData;
+  const profileError = validateProfileData(industryKey, profileData as Record<string, unknown> | null | undefined);
+  if (profileError) throw badRequest(profileError);
+
+  const data: Prisma.BusinessUpdateInput = {
+    ...input,
+    industryKey,
+    subtype: subtypeKey,
+    capabilities,
+    websiteUrl: input.websiteUrl === "" ? null : input.websiteUrl,
+    profileData: input.profileData === undefined ? undefined : input.profileData === null ? Prisma.DbNull : input.profileData as Prisma.InputJsonValue,
+    socialLinks: input.socialLinks === undefined ? undefined : input.socialLinks === null ? Prisma.DbNull : input.socialLinks as Prisma.InputJsonValue,
+    openingHours: input.openingHours === undefined ? undefined : input.openingHours === null ? Prisma.DbNull : input.openingHours as Prisma.InputJsonValue,
+  };
+  const business = await prisma.business.update({ where: { id: businessId }, data });
   return success(response, business);
 });
 
@@ -76,8 +190,23 @@ export const deleteBusiness = asyncHandler(async (request, response) => {
 });
 
 export const setBusinessPublished = asyncHandler(async (request, response) => {
-  const business = await prisma.business.update({ where: { id: getParam(request, "businessId") }, data: { isPublished: getParam(request, "state") === "publish" } });
-  return success(response, { id: business.id, slug: business.slug, isPublished: business.isPublished });
+  const businessId = getParam(request, "businessId");
+  const publish = getParam(request, "state") === "publish";
+  if (publish) {
+    const existing = await prisma.business.findUnique({ where: { id: businessId } });
+    if (!existing) throw notFound("Business not found");
+    if (!existing.name.trim()) throw badRequest("Add a business name before publishing");
+    if (!getIndustry(existing.industryKey)) throw badRequest("Choose a business industry before publishing");
+    if (!validSubtype(existing.industryKey, existing.subtype)) throw badRequest("Choose a business subtype before publishing");
+    if (!existing.capabilities.length) throw badRequest("Choose at least one capability for your public page");
+  }
+  const business = await prisma.business.update({
+    where: { id: businessId },
+    data: publish
+      ? { isPublished: true, publishedAt: new Date(), onboardingCompletedAt: new Date(), onboardingStep: 6 }
+      : { isPublished: false },
+  });
+  return success(response, { id: business.id, slug: business.slug, isPublished: business.isPublished, publishedAt: business.publishedAt });
 });
 
 const publicBusinessInclude = {
@@ -100,29 +229,54 @@ export const getPublicBusiness = asyncHandler(async (request, response) => {
     prisma.booking.count({ where: { businessId: business.id, status: { in: ["PENDING", "CONFIRMED", "COMPLETED"] } } }),
     prisma.businessEvent.create({ data: { businessId: business.id, eventType: "PAGE_VIEW" } }),
   ]);
-  const { ownerId: _ownerId, onboardingStep: _onboardingStep, ...publicFields } = business;
+  const {
+    ownerId: _ownerId,
+    onboardingStep: _onboardingStep,
+    onboardingCompletedAt: _onboardingCompletedAt,
+    canPublishProducts: _canPublishProducts,
+    productAccessExpiresAt: _productAccessExpiresAt,
+    isBlocked: _isBlocked,
+    createdAt: _createdAt,
+    updatedAt: _updatedAt,
+    requestTemplates,
+    ...publicFields
+  } = business;
+  const capabilities = effectiveCapabilities(business.capabilities);
+  const canProducts = capabilities.has("products");
+  const canServices = capabilities.has("services");
+  const canAppointments = capabilities.has("appointments");
+  const canRequests = capabilities.has("service_requests") || capabilities.has("contact_form");
+  const canReviews = capabilities.has("reviews");
   return success(response, {
     ...publicFields,
-    rating: Math.round((ratingSummary._avg.rating ?? 0) * 10) / 10,
-    reviewCount: ratingSummary._count._all,
+    products: canProducts ? business.products : [],
+    services: canServices ? business.services : [],
+    offers: canProducts || canServices ? business.offers : [],
+    reviews: canReviews ? business.reviews : [],
+    bookingSettings: canAppointments ? business.bookingSettings : null,
+    availabilityWindows: canAppointments ? business.availabilityWindows : [],
+    capabilities: [...capabilities],
+    profileDetails: publicProfileDetails(business.industryKey, business.profileData),
+    rating: canReviews ? Math.round((ratingSummary._avg.rating ?? 0) * 10) / 10 : 0,
+    reviewCount: canReviews ? ratingSummary._count._all : 0,
     stats: { pageViews, customerRequests, bookings: bookingCount },
-    requestTemplate: business.requestTemplates[0] ?? null,
+    requestTemplate: canRequests ? requestTemplates[0] ?? null : null,
   });
 });
 
 export const getPublicBusinessBrand = asyncHandler(async (request, response) => {
   const business = await prisma.business.findFirst({
     where: { slug: getParam(request, "slug"), isBlocked: false, isPublished: true },
-    select: { name: true, logoUrl: true, coverImageUrl: true, category: true, city: true, country: true, tagline: true, address: true, phone: true, whatsapp: true, email: true, description: true },
+    select: { name: true, logoUrl: true, coverImageUrl: true, category: true, industryKey: true, subtype: true, capabilities: true, city: true, country: true, tagline: true, address: true, phone: true, whatsapp: true, email: true, description: true },
   });
   if (!business) throw notFound("Business page not found");
-  return success(response, business);
+  return success(response, { ...business, capabilities: [...effectiveCapabilities(business.capabilities)] });
 });
 
 export const listPublicBusinesses = asyncHandler(async (_request, response) => {
   const records = await prisma.business.findMany({
     where: { isPublished: true, isBlocked: false },
-    select: { id: true, name: true, slug: true, category: true, logoUrl: true, coverImageUrl: true },
+    select: { id: true, name: true, slug: true, category: true, industryKey: true, subtype: true, capabilities: true, logoUrl: true, coverImageUrl: true },
     orderBy: { name: "asc" },
     take: 30,
   });
@@ -132,24 +286,26 @@ export const listPublicBusinesses = asyncHandler(async (_request, response) => {
 export const getRequestTemplate = asyncHandler(async (request, response) => {
   const business = await prisma.business.findFirst({
     where: { slug: getParam(request, "slug"), isBlocked: false },
-    select: { id: true, isPublished: true },
+    select: { id: true, isPublished: true, capabilities: true },
   });
   if (!business?.isPublished) throw notFound("Business page not found");
+  const capabilities = effectiveCapabilities(business.capabilities);
+  if (!capabilities.has("service_requests") && !capabilities.has("contact_form")) throw notFound("Request form not available");
   const template = await prisma.requestTemplate.findFirst({
     where: { businessId: business.id, isActive: true },
     include: { questions: { orderBy: { sortOrder: "asc" } } },
   });
   if (!template) throw notFound("Request template not configured");
-  const services = await prisma.service.findMany({
+  const services = capabilities.has("services") ? await prisma.service.findMany({
     where: { businessId: business.id, isPublished: true },
     select: { id: true, name: true, description: true, startingPrice: true, currency: true, duration: true, imageUrl: true },
     orderBy: { sortOrder: "asc" },
-  });
-  const products = await prisma.product.findMany({
+  }) : [];
+  const products = capabilities.has("products") ? await prisma.product.findMany({
     where: { businessId: business.id, isPublished: true, isAvailable: true },
     select: { id: true, name: true, description: true, price: true, currency: true, imageUrl: true },
     orderBy: { sortOrder: "asc" },
-  });
+  }) : [];
   return success(response, { ...template, services, products });
 });
 
